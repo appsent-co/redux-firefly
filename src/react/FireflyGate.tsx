@@ -1,10 +1,9 @@
-import React, { useEffect } from 'react';
-import { useSelector } from 'react-redux';
-import type { FireflyGateProps } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useStore, createStoreHook } from 'react-redux';
+import type { FireflyGateProps, FireflyStore } from '../types';
 
 /**
- * FireflyGate component delays rendering children until hydration completes
- * Similar to redux-persist's PersistGate
+ * FireflyGate component delays rendering children until hydration completes.
  *
  * @example
  * import { Provider } from 'react-redux';
@@ -24,24 +23,31 @@ export function FireflyGate({
   loading,
   children,
   onBeforeHydrate,
+  context,
 }: FireflyGateProps) {
-  // Read hydration status from Redux state
-  const hydrated = useSelector(
-    (state: any) => state._firefly?.hydrated ?? false
+  const useContextStore = useMemo(
+    () => (context ? createStoreHook(context) : useStore),
+    [context]
   );
+  const store = useContextStore() as ReturnType<typeof useStore> & FireflyStore;
 
-  // Call onBeforeHydrate callback when not yet hydrated
+  const [hydrated, setHydrated] = useState(() => store.isHydrated());
+
   useEffect(() => {
-    if (!hydrated && onBeforeHydrate) {
+    if (hydrated) return;
+
+    if (onBeforeHydrate) {
       onBeforeHydrate();
     }
-  }, [hydrated, onBeforeHydrate]);
 
-  // Show loading component while hydrating
+    return store.onHydrationChange((isHydrated) => {
+      if (isHydrated) setHydrated(true);
+    });
+  }, [store, hydrated, onBeforeHydrate]);
+
   if (!hydrated) {
     return loading ? <>{loading}</> : null;
   }
 
-  // Render children once hydration is complete
   return <>{children}</>;
 }

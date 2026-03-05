@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import type { Middleware, Action, AnyAction } from 'redux';
+import type { Action } from 'redux';
+import type { ReactReduxContextValue } from 'react-redux';
 
 /**
  * Supported database operation types
@@ -87,9 +88,9 @@ export interface FireflyMeta {
   /** Database operation(s) to execute - single or array for transactions */
   effect: FireflyEffect | FireflyEffect[];
   /** Optional action to dispatch on successful operation */
-  commit?: AnyAction;
+  commit?: Action & Record<string, unknown>;
   /** Optional action to dispatch on failed operation */
-  rollback?: AnyAction;
+  rollback?: Action & Record<string, unknown>;
 }
 
 /**
@@ -99,6 +100,32 @@ export interface FireflyAction extends Action {
   meta: {
     firefly: FireflyMeta;
     [key: string]: any;
+  };
+}
+
+/**
+ * Action dispatched by the Firefly middleware on successful database operation
+ */
+export interface FireflyCommitAction<P = any> extends Action {
+  payload: P;
+  meta: {
+    firefly: {
+      result: OperationResult;
+      /** Results from transaction (array of OperationResult) */
+      results?: OperationResult[];
+    };
+  };
+}
+
+/**
+ * Action dispatched by the Firefly middleware on failed database operation
+ */
+export interface FireflyRollbackAction<P = any> extends Action {
+  payload: P;
+  meta: {
+    firefly: {
+      error: Error;
+    };
   };
 }
 
@@ -142,7 +169,7 @@ export interface HydrationQuery {
   /** SQL SELECT query to fetch initial data */
   query: string;
   /** Optional parameters for the query */
-  params?: any[];
+  params?: (string | number | null | boolean | Uint8Array)[];
   /** Optional transform function to shape the query results */
   transform?: (rows: any[]) => any;
 }
@@ -174,17 +201,6 @@ export interface OperationResult {
 }
 
 /**
- * Internal Redux state for tracking hydration status
- * Used by FireflyGate component
- */
-export interface FireflyState {
-  /** Whether initial hydration has completed */
-  hydrated: boolean;
-  /** Error that occurred during hydration, if any */
-  error?: Error;
-}
-
-/**
  * Props for the FireflyGate React component
  */
 export interface FireflyGateProps {
@@ -194,4 +210,18 @@ export interface FireflyGateProps {
   children: React.ReactNode;
   /** Optional callback invoked before hydration */
   onBeforeHydrate?: () => void;
+  /** Optional custom react-redux context for multi-store setups */
+  context?: React.Context<ReactReduxContextValue<unknown, never> | null>;
+}
+
+/**
+ * Extended store interface with hydration status
+ */
+export interface FireflyStore {
+  /** Promise that resolves when hydration completes */
+  hydrated: Promise<void>;
+  /** Synchronous check for hydration status */
+  isHydrated: () => boolean;
+  /** Subscribe to hydration status changes */
+  onHydrationChange: (callback: (hydrated: boolean) => void) => () => void;
 }

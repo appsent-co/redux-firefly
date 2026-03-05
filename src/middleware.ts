@@ -1,5 +1,5 @@
-import type { Middleware, Dispatch, AnyAction } from 'redux';
-import type { FireflyConfig, FireflyAction } from './types';
+import type { Middleware } from 'redux';
+import type { FireflyConfig } from './types';
 import { isFireflyAction } from './types';
 import { executeOperation } from './executor';
 
@@ -52,12 +52,7 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
           if (firefly.commit) {
             const commitAction = {
               ...firefly.commit,
-              meta: {
-                ...firefly.commit.meta,
-                firefly: {
-                  result: opResult,
-                },
-              },
+              meta: { firefly: { result: opResult } },
             };
 
             if (debug) {
@@ -76,12 +71,7 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
           if (firefly.rollback) {
             const rollbackAction = {
               ...firefly.rollback,
-              meta: {
-                ...firefly.rollback.meta,
-                firefly: {
-                  error: opResult.error,
-                },
-              },
+              meta: { firefly: { error: opResult.error } },
             };
 
             if (debug) {
@@ -107,12 +97,7 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
         if (firefly.rollback) {
           const rollbackAction = {
             ...firefly.rollback,
-            meta: {
-              ...firefly.rollback.meta,
-              firefly: {
-                error,
-              },
-            },
+            meta: { firefly: { error } },
           };
 
           store.dispatch(rollbackAction);

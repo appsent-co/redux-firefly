@@ -15,6 +15,11 @@
       "import": "./dist/react.esm.js",
       "require": "./dist/react.js",
       "types": "./dist/react.d.ts"
+    },
+    "./toolkit": {
+      "import": "./dist/toolkit.esm.js",
+      "require": "./dist/toolkit.js",
+      "types": "./dist/toolkit.d.ts"
     }
   },
   "files": [
@@ -28,12 +33,19 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
+    "@reduxjs/toolkit": "^2.0.0",
     "expo-sqlite": "^14.0.0 || ^15.0.0",
     "react": "^18.0.0",
     "react-redux": "^8.0.0 || ^9.0.0",
     "redux": "^4.0.0 || ^5.0.0"
   },
+  "peerDependenciesMeta": {
+    "@reduxjs/toolkit": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@reduxjs/toolkit": "^2.0.0",
     "@eslint/js": "^9.0.0",
     "@rollup/plugin-node-resolve": "^15.0.0",
     "@rollup/plugin-typescript": "^11.0.0",

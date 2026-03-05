@@ -1,49 +1,46 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
-const config = getDefaultConfig(__dirname);
+const projectRoot = __dirname;
+const monorepoRoot = path.resolve(projectRoot, '..');
 
-// Watch the parent directory for changes
-config.watchFolders = [
-  path.resolve(__dirname, '..'), // Parent redux-firefly directory
-];
+const config = getDefaultConfig(projectRoot);
 
-// Resolve redux-firefly from parent directory
+// Watch the library source for live reloading
+config.watchFolders = [monorepoRoot];
+
+// Resolve packages from both the example and the parent
 config.resolver.nodeModulesPaths = [
-  path.resolve(__dirname, 'node_modules'),
-  path.resolve(__dirname, '../node_modules'),
+  path.resolve(projectRoot, 'node_modules'),
+  path.resolve(monorepoRoot, 'node_modules'),
 ];
 
-// Ensure proper source extensions
-config.resolver.sourceExts = [...config.resolver.sourceExts, 'cjs'];
+// Prevent the parent's node_modules copies of React packages from being bundled.
+// This ensures only the example app's copies are used (no duplicate React).
+const exclusionList = require('metro-config/src/defaults/exclusionList');
+config.resolver.blockList = exclusionList([
+  new RegExp(
+    path.resolve(monorepoRoot, 'node_modules', '(react|react-native|react-redux)')
+      .replace(/[/\\]/g, '[/\\\\]') + '[/\\\\].*'
+  ),
+]);
 
-// Force React and React Native to resolve from example's node_modules only
-// This prevents "multiple copies of React" errors when using file:.. links
-config.resolver.extraNodeModules = {
-  react: path.resolve(__dirname, 'node_modules/react'),
-  'react-native': path.resolve(__dirname, 'node_modules/react-native'),
-  'react-redux': path.resolve(__dirname, 'node_modules/react-redux'),
-};
-
-// Add custom resolver for redux-firefly subpath exports
+// Resolve redux-firefly imports to source for live development
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  // Handle redux-firefly/react subpath
   if (moduleName === 'redux-firefly/react') {
     return {
-      filePath: path.resolve(__dirname, '../dist/react.js'),
+      filePath: path.resolve(monorepoRoot, 'src/react/index.ts'),
       type: 'sourceFile',
     };
   }
 
-  // Handle redux-firefly main export
   if (moduleName === 'redux-firefly') {
     return {
-      filePath: path.resolve(__dirname, '../dist/index.js'),
+      filePath: path.resolve(monorepoRoot, 'src/index.ts'),
       type: 'sourceFile',
     };
   }
 
-  // Fall back to default resolver (which will use extraNodeModules for React packages)
   return context.resolveRequest(context, moduleName, platform);
 };
 

@@ -20,7 +20,8 @@
     "baseUrl": ".",
     "paths": {
       "redux-firefly": ["../dist/index.d.ts"],
-      "redux-firefly/react": ["../dist/react.d.ts"]
+      "redux-firefly/react": ["../dist/react.d.ts"],
+      "redux-firefly/toolkit": ["../dist/toolkit.d.ts"]
     }
   },
   "include": [

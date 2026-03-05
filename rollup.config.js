@@ -55,6 +55,32 @@ export default [
     ],
     external: ['redux', 'react', 'react-redux'],
   },
+  // Toolkit bundle
+  {
+    input: 'src/toolkit/index.ts',
+    output: [
+      {
+        file: 'dist/toolkit.js',
+        format: 'cjs',
+        sourcemap: true,
+        exports: 'named',
+      },
+      {
+        file: 'dist/toolkit.esm.js',
+        format: 'esm',
+        sourcemap: true,
+      },
+    ],
+    plugins: [
+      resolve(),
+      typescript({
+        tsconfig: './tsconfig.json',
+        declaration: false,
+        exclude: ['**/*.test.ts', '**/__tests__/**'],
+      }),
+    ],
+    external: ['@reduxjs/toolkit', 'redux'],
+  },
   // Main type definitions
   {
     input: 'src/index.ts',
@@ -69,6 +95,15 @@ export default [
     input: 'src/react/index.ts',
     output: {
       file: 'dist/react.d.ts',
+      format: 'esm',
+    },
+    plugins: [dts()],
+  },
+  // Toolkit type definitions
+  {
+    input: 'src/toolkit/index.ts',
+    output: {
+      file: 'dist/toolkit.d.ts',
       format: 'esm',
     },
     plugins: [dts()],

@@ -38,25 +38,20 @@ export async function hydrateFromDatabase(
   db: SQLiteDatabase,
   config: HydrationConfig
 ): Promise<Record<string, any>> {
-  const state: Record<string, any> = {};
+  const entries = Object.entries(config);
 
-  for (const [sliceName, queryConfig] of Object.entries(config)) {
-    try {
-      const { query, params = [], transform } = queryConfig;
+  const results = await Promise.all(
+    entries.map(async ([sliceName, queryConfig]) => {
+      try {
+        const { query, params = [], transform } = queryConfig;
+        const rows = await db.getAllAsync(query, params);
+        return [sliceName, transform ? transform(rows) : rows] as const;
+      } catch (error) {
+        console.error(`[Firefly] Failed to hydrate slice "${sliceName}":`, error);
+        return [sliceName, undefined] as const;
+      }
+    })
+  );
 
-      // Execute the query
-      const rows = await db.getAllAsync(query, params);
-
-      // Apply transform if provided, otherwise use raw rows
-      state[sliceName] = transform ? transform(rows) : rows;
-    } catch (error) {
-      console.error(`[Firefly] Failed to hydrate slice "${sliceName}":`, error);
-
-      // Continue with other slices even if one fails
-      // Set undefined to indicate hydration failure for this slice
-      state[sliceName] = undefined;
-    }
-  }
-
-  return state;
+  return Object.fromEntries(results);
 }

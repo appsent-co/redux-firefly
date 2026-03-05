@@ -1,6 +1,6 @@
 # Redux-Firefly
 
-Redux middleware for persisting state to SQLite in React Native. Inspired by redux-offline, redux-firefly provides an easy and reactive API that uses Redux for global state and SQLite as storage.
+Redux middleware for persisting state to SQLite in React Native. Redux-firefly provides an easy and reactive API that uses Redux for global state and SQLite as storage.
 
 ## Documentation
 
@@ -35,37 +35,54 @@ See the [Quick Start Guide](QUICK_START.md) for a complete setup tutorial.
 
 ## API Reference
 
-### `createFireflyMiddleware(config)`
+### `createFirefly(config)`
 
-Creates the Firefly Redux middleware.
+Creates the Firefly middleware, reducer enhancer, and store enhancer.
 
 **Parameters:**
 - `database` (SQLiteDatabase): expo-sqlite database instance
 - `onError?` (function): Optional error handler `(error, action) => void`
 - `debug?` (boolean): Enable debug logging
 
-**Returns:** Redux middleware
-
-### `hydrateFromDatabase(db, config)`
-
-Hydrates Redux state from SQLite database.
-
-**Parameters:**
-- `db` (SQLiteDatabase): Database instance
-- `config` (HydrationConfig): Object mapping slice names to queries
-
-**Returns:** Promise<Record<string, any>>
+**Returns:** `{ middleware, enhanceReducer, enhanceStore }`
 
 **Example:**
 ```typescript
-const preloadedState = await hydrateFromDatabase(db, {
-  todos: {
-    query: 'SELECT * FROM todos WHERE user_id = ?',
-    params: [currentUserId],
-    transform: (rows) => ({ items: rows }),
-  },
+import { createFirefly, withHydration } from 'redux-firefly';
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: db,
+  debug: __DEV__,
 });
+
+const store = configureStore({
+  reducer: enhanceReducer({
+    todos: withHydration(todosSlice.reducer, {
+      query: 'SELECT * FROM todos',
+      transform: (rows) => rows.map(r => ({
+        id: r.id, text: r.text, completed: Boolean(r.completed),
+      })),
+    }),
+    user: userReducer,
+  }),
+  enhancers: (getDefaultEnhancers) =>
+    getDefaultEnhancers().concat(enhanceStore),
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(middleware),
+});
+
+await store.hydrated;
 ```
+
+### `withHydration(reducer, config)`
+
+Attaches hydration configuration to a reducer so it can be auto-discovered by `enhanceReducer`.
+
+**Parameters:**
+- `reducer` (Reducer): A Redux reducer
+- `config` (HydrationQuery): `{ query, params?, transform? }`
+
+**Returns:** The same reducer with hydration metadata attached
 
 ### Effect Types
 
@@ -221,12 +238,11 @@ Delays rendering your app until hydration completes, similar to redux-persist's 
 ```tsx
 import { FireflyGate } from 'redux-firefly/react';
 
-<FireflyGate
-  loading={<LoadingScreen />}
-  onBeforeHydrate={() => console.log('Hydrating...')}
->
-  <App />
-</FireflyGate>
+<Provider store={store}>
+  <FireflyGate loading={<LoadingScreen />}>
+    <App />
+  </FireflyGate>
+</Provider>
 ```
 
 **Props:**
@@ -234,19 +250,10 @@ import { FireflyGate } from 'redux-firefly/react';
 - `children` (ReactNode): App to render after hydration
 - `onBeforeHydrate?` (function): Callback invoked before hydration
 
-### fireflyReducer
-
-Required reducer for tracking hydration status:
+Alternatively, you can skip `FireflyGate` entirely and await the hydration promise:
 
 ```typescript
-import { fireflyReducer } from 'redux-firefly';
-
-const store = configureStore({
-  reducer: {
-    ...yourReducers,
-    _firefly: fireflyReducer,  // Required for FireflyGate
-  },
-});
+await store.hydrated;
 ```
 
 ## TypeScript

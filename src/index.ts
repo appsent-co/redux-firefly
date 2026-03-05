@@ -1,9 +1,7 @@
-// Main middleware and hydration
-export { createFireflyMiddleware } from './middleware';
-export { hydrateFromDatabase } from './hydration';
-
-// React integration
-export { fireflyReducer } from './react/fireflyReducer';
+// Main API
+export { createFirefly } from './createFirefly';
+export { withHydration } from './withHydration';
+export type { HydratedReducer } from './withHydration';
 
 // Type guards and utilities
 export { isFireflyAction } from './types';
@@ -22,6 +20,8 @@ export type {
 
   // Action & Metadata
   FireflyAction,
+  FireflyCommitAction,
+  FireflyRollbackAction,
   FireflyMeta,
 
   // Configuration
@@ -32,8 +32,8 @@ export type {
   // Results
   OperationResult,
 
-  // State
-  FireflyState,
+  // Store
+  FireflyStore,
 
   // React
   FireflyGateProps,

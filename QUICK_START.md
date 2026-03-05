@@ -30,51 +30,48 @@ db.execSync(`
 `src/store.ts`:
 ```typescript
 import { configureStore } from '@reduxjs/toolkit';
-import { createFireflyMiddleware, hydrateFromDatabase, fireflyReducer } from 'redux-firefly';
+import { createFirefly, withHydration } from 'redux-firefly';
 import { db } from './db';
 
-const fireflyMiddleware = createFireflyMiddleware({
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
   database: db,
   debug: __DEV__,
 });
 
-export async function createStore() {
-  const preloadedState = await hydrateFromDatabase(db, {
-    todos: {
-      query: 'SELECT * FROM todos',
-      transform: (rows) => rows.map(r => ({
-        id: r.id,
-        text: r.text,
-        completed: Boolean(r.completed),
-      })),
-    },
-  });
+const todosReducer = withHydration(
+  (state = [], action: any) => {
+    switch (action.type) {
+      case 'ADD_TODO':
+        return [...state, action.payload];
+      case 'TOGGLE_TODO':
+        return state.map(t =>
+          t.id === action.payload.id ? { ...t, completed: !t.completed } : t
+        );
+      case 'DELETE_TODO':
+        return state.filter(t => t.id !== action.payload.id);
+      default:
+        return state;
+    }
+  },
+  {
+    query: 'SELECT * FROM todos',
+    transform: (rows) => rows.map(r => ({
+      id: r.id,
+      text: r.text,
+      completed: Boolean(r.completed),
+    })),
+  }
+);
 
-  return configureStore({
-    reducer: {
-      todos: (state = [], action: any) => {
-        switch (action.type) {
-          case 'ADD_TODO':
-            return [...state, action.payload];
-          case 'TOGGLE_TODO':
-            return state.map(t =>
-              t.id === action.payload.id ? { ...t, completed: !t.completed } : t
-            );
-          case 'DELETE_TODO':
-            return state.filter(t => t.id !== action.payload.id);
-          default:
-            return state;
-        }
-      },
-      _firefly: fireflyReducer,
-    },
-    middleware: (gDM) => gDM().concat(fireflyMiddleware),
-    preloadedState: {
-      ...preloadedState,
-      _firefly: { hydrated: true },
-    },
-  });
-}
+export const store = configureStore({
+  reducer: enhanceReducer({
+    todos: todosReducer,
+  }),
+  enhancers: (getDefaultEnhancers) =>
+    getDefaultEnhancers().concat(enhanceStore),
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(middleware),
+});
 ```
 
 ## 4. Create Actions
@@ -129,11 +126,10 @@ export const deleteTodo = (id: number) => ({
 
 `App.tsx`:
 ```tsx
-import { useState, useEffect } from 'react';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import { FireflyGate } from 'redux-firefly/react';
 import { View, Text, Button, ActivityIndicator } from 'react-native';
-import { createStore } from './src/store';
+import { store } from './src/store';
 import { addTodo, toggleTodo, deleteTodo } from './src/actions';
 
 function TodoList() {
@@ -155,14 +151,6 @@ function TodoList() {
 }
 
 export default function App() {
-  const [store, setStore] = useState(null);
-
-  useEffect(() => {
-    createStore().then(setStore);
-  }, []);
-
-  if (!store) return <ActivityIndicator />;
-
   return (
     <Provider store={store}>
       <FireflyGate loading={<ActivityIndicator />}>
@@ -188,10 +176,6 @@ Your app now:
 - Check out the example app in `/example`
 
 ## Common Issues
-
-**App stuck on loading?**
-- Check `_firefly: { hydrated: true }` is in preloadedState
-- Verify `fireflyReducer` is in your reducer object
 
 **Data not saving?**
 - Check action has `meta.firefly` property

@@ -64,6 +64,14 @@ export interface TodoRow {
   updated_at: number;
 }
 
+export interface TodoJoinRow extends TodoRow {
+  category_name: string | null;
+  category_color: string | null;
+  category_icon: string | null;
+  category_sort_order: number | null;
+  tags_data: string | null;
+}
+
 export interface CategoryRow {
   id: number;
   name: string;
