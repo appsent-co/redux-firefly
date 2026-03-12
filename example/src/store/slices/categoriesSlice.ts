@@ -1,5 +1,4 @@
-import type { PayloadAction } from '@reduxjs/toolkit';
-import { createFireflySlice, type FireflyCommitPayloadAction } from 'redux-firefly/toolkit';
+import { createFireflySlice } from 'redux-firefly/toolkit';
 import type { Category, CategoryRow } from '../../types';
 
 const initialState: Category[] = [];
@@ -20,10 +19,10 @@ const categoriesSlice = createFireflySlice({
       }));
     },
   },
-  reducers: {
+  reducers: (fireflyReducer) => ({
     // Add category with optimistic updates
-    addCategory: {
-      reducer: (state, action: PayloadAction<Category>) => {
+    addCategory: fireflyReducer({
+      reducer: (state, action) => {
         state.push(action.payload);
       },
       prepare: (name: string, color: string, icon?: string) => {
@@ -37,44 +36,41 @@ const categoriesSlice = createFireflySlice({
             icon,
             sortOrder: 999,
             createdAt: now,
-          } as Category,
-          meta: {
-            firefly: {
-              effect: {
-                type: 'INSERT' as const,
-                table: 'categories',
-                values: {
-                  name,
-                  color,
-                  icon,
-                  sort_order: 999,
-                  created_at: Math.floor(now / 1000),
-                },
-              },
-              commit: { payload: { tempId } },
-              rollback: { payload: { tempId } },
-            },
           },
         };
       },
-      commit: (state, action: FireflyCommitPayloadAction<{ tempId: any }>) => {
+      effect: (payload) => ({
+        type: 'INSERT' as const,
+        table: 'categories',
+        values: {
+          name: payload.name,
+          color: payload.color,
+          icon: payload.icon,
+          sort_order: 999,
+          created_at: Math.floor(payload.createdAt / 1000),
+        },
+      }),
+      commit: (state, action) => {
         const realId = action.meta.firefly.result.insertId;
-        const category = state.find((c) => c.id === action.payload.tempId);
+        const category = state.find((c) => c.id === action.payload.id);
         if (category && realId) {
           category.id = realId;
         }
       },
-      rollback: (state, action: PayloadAction<{ tempId: any }>) => {
-        return state.filter((c) => c.id !== action.payload.tempId);
+      rollback: (state, action) => {
+        return state.filter((c) => c.id !== action.payload.id);
       },
-    },
+    }),
 
     // Update category
-    updateCategory: {
-      reducer: (
-        state,
-        action: PayloadAction<{ id: number; name?: string; color?: string; icon?: string }>
-      ) => {
+    updateCategory: fireflyReducer({
+      prepare: (
+        id: number,
+        updates: { name?: string; color?: string; icon?: string }
+      ) => ({
+        payload: { id, ...updates },
+      }),
+      reducer: (state, action) => {
         const category = state.find((c) => c.id === action.payload.id);
         if (category) {
           if (action.payload.name) category.name = action.payload.name;
@@ -82,67 +78,49 @@ const categoriesSlice = createFireflySlice({
           if (action.payload.icon !== undefined) category.icon = action.payload.icon;
         }
       },
-      prepare: (
-        id: number,
-        updates: { name?: string; color?: string; icon?: string }
-      ) => ({
-        payload: { id, ...updates },
-        meta: {
-          firefly: {
-            effect: {
-              type: 'UPDATE' as const,
-              table: 'categories',
-              values: updates,
-              where: { id },
-            },
-          },
-        },
+      effect: (payload) => ({
+        type: 'UPDATE' as const,
+        table: 'categories',
+        values: { name: payload.name, color: payload.color, icon: payload.icon },
+        where: { id: payload.id },
       }),
-    },
+    }),
 
     // Delete category
-    deleteCategory: {
-      reducer: (state, action: PayloadAction<{ id: number }>) => {
+    deleteCategory: fireflyReducer({
+      reducer: (state, action) => {
         return state.filter((c) => c.id !== action.payload.id);
       },
       prepare: (id: number, deletedCategory: Category) => ({
-        payload: { id },
-        meta: {
-          firefly: {
-            effect: {
-              type: 'DELETE' as const,
-              table: 'categories',
-              where: { id },
-            },
-            rollback: { payload: { deletedCategory } },
-          },
-        },
+        payload: { id, deletedCategory },
       }),
-      rollback: (state, action: PayloadAction<{ deletedCategory: Category }>) => {
+      effect: (payload) => ({
+        type: 'DELETE' as const,
+        table: 'categories',
+        where: { id: payload.id },
+      }),
+      rollback: (state, action) => {
         state.push(action.payload.deletedCategory);
       },
-    },
+    }),
 
     // Reorder categories (bulk update using transaction)
-    reorderCategories: {
-      reducer: (_state, action: PayloadAction<Category[]>) => {
+    reorderCategories: fireflyReducer({
+      reducer: (_state, action) => {
         return action.payload;
       },
       prepare: (categories: Category[]) => ({
         payload: categories.map((cat, index) => ({ ...cat, sortOrder: index })),
-        meta: {
-          firefly: {
-            effect: categories.map((cat, index) => ({
-              type: 'UPDATE' as const,
-              table: 'categories',
-              values: { sort_order: index },
-              where: { id: cat.id },
-            })),
-          },
-        },
       }),
-    },
-  },
+      effect: (payload) =>
+        payload.map((cat, index) => ({
+          type: 'UPDATE' as const,
+          table: 'categories',
+          values: { sort_order: index },
+          where: { id: cat.id },
+        })),
+    }),
+  }),
 });
 
 export const {

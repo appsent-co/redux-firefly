@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from './driver';
 import type { HydrationConfig } from './types';
 
 /**
@@ -35,7 +35,7 @@ import type { HydrationConfig } from './types';
  * })
  */
 export async function hydrateFromDatabase(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   config: HydrationConfig
 ): Promise<Record<string, any>> {
   const entries = Object.entries(config);

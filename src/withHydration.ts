@@ -24,6 +24,10 @@ export type HydratedReducer<S = unknown> = Reducer<S> & {
  *   })
  * });
  */
+export function isHydratedReducer(reducer: Reducer): reducer is HydratedReducer {
+  return '_fireflyHydration' in reducer;
+}
+
 export function withHydration<S>(
   reducer: Reducer<S>,
   config: HydrationQuery

@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from '../driver';
 import type { InsertEffect, OperationResult } from '../types';
 
 /**
@@ -15,7 +15,7 @@ import type { InsertEffect, OperationResult } from '../types';
  * })
  */
 export async function executeInsert(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: InsertEffect
 ): Promise<OperationResult> {
   const { table, values } = effect;

@@ -34,6 +34,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     };
   }
 
+  if (moduleName === 'redux-firefly/toolkit') {
+    return {
+      filePath: path.resolve(monorepoRoot, 'src/toolkit/index.ts'),
+      type: 'sourceFile',
+    };
+  }
+
   if (moduleName === 'redux-firefly') {
     return {
       filePath: path.resolve(monorepoRoot, 'src/index.ts'),

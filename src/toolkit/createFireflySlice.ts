@@ -1,50 +1,86 @@
 import { createSlice } from '@reduxjs/toolkit';
 import type {
-  ActionReducerMapBuilder,
-  CaseReducer,
+  CreateSliceOptions,
+  Draft,
   PayloadAction,
-  Reducer,
+  PrepareAction,
+  SliceCaseReducers,
+  ValidateSliceCaseReducers,
 } from '@reduxjs/toolkit';
-import type { HydrationQuery } from '../types';
-import type { HydratedReducer } from '../withHydration';
+import type { FireflyEffect, FireflyCommitAction, FireflyRollbackAction, HydrationQuery } from '../types';
+import { withHydration } from '../withHydration';
 
-/**
- * Return type for createFireflySlice.
- * Similar to RTK's Slice but with loosely typed actions since
- * we transform the reducers map internally.
- */
-export interface FireflySlice<State, Name extends string = string> {
-  name: Name;
-  reducer: Reducer<State>;
-  actions: Record<string, (...args: any[]) => any>;
-  caseReducers: Record<string, (...args: any[]) => any>;
-  getInitialState: () => State;
+/** Shared fields for all Firefly case reducer definitions. */
+interface FireflyCaseReducerDef<State, P> {
+  reducer: (state: Draft<State>, action: PayloadAction<P>) => State | void;
+  effect: FireflyEffect | FireflyEffect[] | ((payload: P) => FireflyEffect | FireflyEffect[]);
+  commit?: (state: Draft<State>, action: FireflyCommitAction<P>) => State | void;
+  rollback?: (state: Draft<State>, action: FireflyRollbackAction<P>) => State | void;
+}
+
+/** A Firefly case reducer definition with a prepare callback. */
+export interface FireflyCaseReducerWithPrepareDef<State, P, Args extends unknown[]> extends FireflyCaseReducerDef<State, P> {
+  prepare: (...args: Args) => { payload: P };
 }
 
 /**
- * A reducer definition with optional colocated commit/rollback handlers.
+ * Creates a typed Firefly case reducer with colocated effect, commit, and rollback handlers.
+ *
+ * Call this once per slice state type (curried), then use the returned function
+ * to define individual case reducers. TypeScript infers the payload type from
+ * the `reducer` (or `prepare`) you provide.
+ *
+ * @example
+ * // At the top of your slice file, bind the state type once:
+ * const fireflyReducer = createFireflyCaseReducer<Todo[]>();
+ *
+ * // Then use it in createFireflySlice (or createSlice) reducers:
+ * const todosSlice = createFireflySlice({
+ *   name: 'todos',
+ *   initialState: [] as Todo[],
+ *   reducers: {
+ *     addTodo: fireflyReducer({
+ *       reducer: (state, action) => { state.push(action.payload); },
+ *       prepare: (text: string) => ({ payload: { id: tempId(), text, completed: false } }),
+ *       effect: (payload) => ({ type: 'INSERT', table: 'todos', values: payload }),
+ *       commit: (state, action) => { ... },
+ *       rollback: (state, action) => { state.pop(); },
+ *     }),
+ *   },
+ * });
  */
-type FireflyReducerDefinition<State> =
-  | CaseReducer<State, PayloadAction<any>>
-  | {
-      reducer: CaseReducer<State, any>;
-      prepare: (...args: any[]) => { payload: any; meta?: any; error?: any };
-      commit?: CaseReducer<State, any>;
-      rollback?: CaseReducer<State, any>;
-    };
+export function createFireflyCaseReducer<State>() {
+  // Prepare overload first — TypeScript infers P from `prepare`'s return type,
+  // then contextually types `reducer`, `effect`, `commit`, and `rollback`.
+  function define<P, Args extends unknown[]>(
+    def: FireflyCaseReducerWithPrepareDef<State, P, Args>
+  ): FireflyCaseReducerWithPrepareDef<State, P, Args>;
+  // No-prepare overload — `{ prepare?: never }` ensures objects with a `prepare`
+  // field are never matched here, forcing them through the overload above.
+  // A default identity prepare is injected at runtime for RTK compatibility.
+  function define<P>(
+    def: FireflyCaseReducerDef<State, P> & { prepare?: never }
+  ): FireflyCaseReducerWithPrepareDef<State, P, []>;
+  function define(def: FireflyCaseReducerDef<any, any> | FireflyCaseReducerWithPrepareDef<any, any, any[]>) {
+    if (!('prepare' in def) || !def.prepare) {
+      return { ...def, prepare: (payload: any) => ({ payload }) };
+    }
+    return def;
+  }
+  return define;
+}
 
 /**
- * Checks if a reducer definition has firefly commit/rollback handlers.
+ * Checks if a reducer definition has a firefly effect.
  */
 function isFireflyReducer(
   def: unknown
-): def is { reducer: CaseReducer; prepare: (...args: any[]) => any; commit?: CaseReducer; rollback?: CaseReducer } {
+): def is FireflyCaseReducerDef<any, any> & { prepare: PrepareAction<any> } {
   return (
-    def !== null &&
     typeof def === 'object' &&
-    'prepare' in (def as any) &&
-    'reducer' in (def as any) &&
-    ('commit' in (def as any) || 'rollback' in (def as any))
+    def !== null &&
+    'reducer' in def &&
+    'effect' in def
   );
 }
 
@@ -73,43 +109,43 @@ function isFireflyReducer(
  *     addTodo: {
  *       reducer: (state, action) => { state.push(action.payload); },
  *       prepare: (text: string) => ({
- *         payload: { ... },
- *         meta: {
- *           firefly: {
- *             effect: { type: 'INSERT', table: 'todos', values: { text } },
- *             commit: { payload: { tempId } },
- *             rollback: { payload: { tempId } },
- *           },
- *         },
+ *         payload: { id: tempId(), text, completed: false },
  *       }),
- *       commit: (state, action) => { ... },
- *       rollback: (state, action) => { ... },
+ *       effect: (payload) => ({ type: 'INSERT', table: 'todos', values: { text: payload.text } }),
+ *       commit: (state, action) => { ... },   // action.payload = original payload
+ *       rollback: (state, action) => { ... }, // action.payload = original payload
  *     },
  *   },
  * });
  */
+
+/** The pre-typed helper function provided to the `reducers` callback. */
+type FireflyReducerFactory<State> = ReturnType<typeof createFireflyCaseReducer<State>>;
+
+interface CreateFireflySliceOptions<State, CR extends SliceCaseReducers<State>, Name extends string>
+  extends Omit<CreateSliceOptions<State, CR, Name>, 'reducers'> {
+  hydration?: HydrationQuery;
+}
+
 export function createFireflySlice<
   State,
-  Name extends string = string,
->(options: {
-  name: Name;
-  initialState: State | (() => State);
-  reducers: Record<string, FireflyReducerDefinition<State>>;
-  hydration?: HydrationQuery;
-  extraReducers?: (builder: ActionReducerMapBuilder<State>) => void;
-}): FireflySlice<State, Name> {
-  const { name, reducers, hydration, extraReducers: userExtraReducers, ...rest } = options;
+  Name extends string,
+  CR extends SliceCaseReducers<State>,
+>(options: CreateFireflySliceOptions<State, CR, Name> & {
+  reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
+}) {
+  const { name, reducers: reducersFactory, hydration, extraReducers: userExtraReducers, ...rest } = options;
+
+  const reducers: CR = reducersFactory(createFireflyCaseReducer<State>());
 
   // Collect commit/rollback handlers with their auto-generated type strings
   const fireflyHandlers: Array<{
     type: string;
-    handler: CaseReducer<State, any>;
+    handler: (state: Draft<State>, action: any) => State | void;
   }> = [];
 
-  // Build a clean reducers map without commit/rollback properties
-  const cleanReducers: Record<string, any> = {};
-
-  for (const [key, def] of Object.entries(reducers as Record<string, any>)) {
+  // Build a clean reducers map for createSlice
+  for (const [key, def] of Object.entries(reducers)) {
     if (isFireflyReducer(def)) {
       const commitType = `${name}/${key}/commit`;
       const rollbackType = `${name}/${key}/rollback`;
@@ -122,42 +158,53 @@ export function createFireflySlice<
         fireflyHandlers.push({ type: rollbackType, handler: def.rollback });
       }
 
-      // Wrap prepare to auto-inject commit/rollback type strings
+      // Wrap prepare to construct meta.firefly from the effect property
       const originalPrepare = def.prepare;
-      const wrappedPrepare = (...args: any[]) => {
-        const prepared = originalPrepare(...args);
-        const firefly = { ...prepared.meta?.firefly };
+      const wrappedPrepare: PrepareAction<any> = (...args: unknown[]) => {
+        const prepared = originalPrepare
+          ? originalPrepare(...args)
+          : { payload: null };
+
+        const payload = prepared.payload;
+        const effectValue = typeof def.effect === 'function'
+          ? def.effect(payload)
+          : def.effect;
+
+        const firefly: Record<string, unknown> = {
+          effect: effectValue,
+          originalPayload: payload,
+        };
 
         if (def.commit) {
-          firefly.commit = { ...firefly.commit, type: commitType };
+          firefly.commit = { type: commitType };
         }
 
         if (def.rollback) {
-          firefly.rollback = { ...firefly.rollback, type: rollbackType };
+          firefly.rollback = { type: rollbackType };
+        }
+
+        let existingMeta = {};
+        if ('meta' in prepared && typeof prepared.meta === 'object' && prepared.meta !== null) {
+          existingMeta = prepared.meta;
         }
 
         return {
           ...prepared,
-          meta: { ...prepared.meta, firefly },
+          meta: { ...existingMeta, firefly },
         };
       };
 
-      cleanReducers[key] = {
-        reducer: def.reducer,
-        prepare: wrappedPrepare,
-      };
-    } else {
-      cleanReducers[key] = def;
+      def.prepare = wrappedPrepare;
     }
   }
 
   const slice = createSlice({
     ...rest,
     name,
-    reducers: cleanReducers as any,
+    reducers: reducers as unknown as ValidateSliceCaseReducers<State, CR>,
     extraReducers: (builder) => {
       for (const { type, handler } of fireflyHandlers) {
-        builder.addCase(type, handler as any);
+        builder.addCase(type, handler);
       }
 
       if (typeof userExtraReducers === 'function') {
@@ -168,8 +215,8 @@ export function createFireflySlice<
 
   // Attach hydration metadata to the reducer if provided
   if (hydration) {
-    (slice.reducer as unknown as HydratedReducer<State>)._fireflyHydration = hydration;
+    withHydration(slice.reducer, hydration);
   }
 
-  return slice as any;
+  return slice;
 }

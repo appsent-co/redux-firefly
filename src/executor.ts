@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from './driver';
 import type { FireflyEffect, OperationResult } from './types';
 import {
   executeInsert,
@@ -29,7 +29,7 @@ import {
  * ])
  */
 export async function executeOperation(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: FireflyEffect | FireflyEffect[]
 ): Promise<OperationResult> {
   try {
@@ -55,7 +55,7 @@ export async function executeOperation(
  * @returns Operation result
  */
 async function executeSingleOperation(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: FireflyEffect
 ): Promise<OperationResult> {
   switch (effect.type) {
@@ -82,7 +82,7 @@ async function executeSingleOperation(
  * @returns Combined operation result
  */
 async function executeTransaction(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effects: FireflyEffect[]
 ): Promise<OperationResult> {
   try {

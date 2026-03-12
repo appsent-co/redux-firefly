@@ -1,12 +1,6 @@
 # Redux-Firefly
 
-Redux middleware for persisting state to SQLite in React Native. Redux-firefly provides an easy and reactive API that uses Redux for global state and SQLite as storage.
-
-## Documentation
-
-- **[Quick Start Guide](QUICK_START.md)** - Get up and running in 5 minutes
-- **[API Reference](#api-reference)** - Detailed API documentation (below)
-- **[Advanced Usage](#advanced-usage)** - Transactions, optimistic updates, and complex patterns
+Redux middleware for persisting state to SQLite in React Native. Redux-Firefly provides an easy and reactive API that uses Redux for global state and SQLite as storage.
 
 ## Features
 
@@ -16,6 +10,8 @@ Redux middleware for persisting state to SQLite in React Native. Redux-firefly p
 - **Hydration**: Load initial state from SQLite on app startup
 - **React Integration**: FireflyGate component delays rendering until hydration completes
 - **TypeScript**: Full type safety with comprehensive TypeScript definitions
+- **Redux Toolkit Integration**: `createFireflySlice` for colocated effect, commit, and rollback handlers
+- **Driver Abstraction**: Bring your own SQLite client via the `FireflyDriver` interface
 - **Custom Schema**: You control the database schema completely
 
 ## Installation
@@ -28,10 +24,91 @@ yarn add redux-firefly
 
 **Required peer dependencies:**
 ```bash
-npm install redux react-redux expo-sqlite
+npm install @reduxjs/toolkit react-redux expo-sqlite
 ```
 
-See the [Quick Start Guide](QUICK_START.md) for a complete setup tutorial.
+## Quick Start
+
+### 1. Create the Firefly instance
+
+```typescript
+import { createFirefly, expoSQLiteDriver } from 'redux-firefly';
+import * as SQLite from 'expo-sqlite';
+
+const db = SQLite.openDatabaseSync('app.db');
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: expoSQLiteDriver(db),
+  onError: (error, action) => console.error('[Firefly]', error.message, action.type),
+  debug: __DEV__,
+});
+```
+
+### 2. Configure the store
+
+```typescript
+import { configureStore } from '@reduxjs/toolkit';
+
+const store = configureStore({
+  reducer: enhanceReducer({
+    todos: todosSlice.reducer,  // hydration config is auto-discovered
+    user: userReducer,
+  }),
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActionPaths: ['meta.firefly'],
+      },
+    }).concat(middleware),
+  enhancers: (getDefaultEnhancers) =>
+    getDefaultEnhancers().concat(enhanceStore),
+});
+
+// Wait for hydration before rendering
+await store.hydrated;
+```
+
+### 3. Define a slice with persistence
+
+```typescript
+import { createFireflySlice } from 'redux-firefly/toolkit';
+
+const todosSlice = createFireflySlice({
+  name: 'todos',
+  initialState: [] as Todo[],
+  hydration: {
+    query: 'SELECT * FROM todos',
+    transform: (rows) => rows.map(r => ({
+      id: r.id, text: r.text, completed: Boolean(r.completed),
+    })),
+  },
+  reducers: (fireflyReducer) => ({
+    addTodo: fireflyReducer({
+      reducer: (state, action) => {
+        state.push(action.payload);
+      },
+      prepare: (text: string) => ({
+        payload: { id: `temp_${Date.now()}`, text, completed: false },
+      }),
+      effect: (payload) => ({
+        type: 'INSERT',
+        table: 'todos',
+        values: { text: payload.text, completed: 0 },
+      }),
+      commit: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.id = action.meta.firefly.result.insertId!;
+      },
+      rollback: (state, action) => {
+        return state.filter(t => t.id !== action.payload.id);
+      },
+    }),
+  }),
+});
+
+export const { addTodo } = todosSlice.actions;
+export default todosSlice.reducer;
+```
 
 ## API Reference
 
@@ -40,38 +117,33 @@ See the [Quick Start Guide](QUICK_START.md) for a complete setup tutorial.
 Creates the Firefly middleware, reducer enhancer, and store enhancer.
 
 **Parameters:**
-- `database` (SQLiteDatabase): expo-sqlite database instance
-- `onError?` (function): Optional error handler `(error, action) => void`
+- `database` (FireflyDriver): A database driver instance (e.g. `expoSQLiteDriver(db)`)
+- `onError?` (`(error: Error, action: FireflyAction) => void`): Optional error handler
 - `debug?` (boolean): Enable debug logging
 
 **Returns:** `{ middleware, enhanceReducer, enhanceStore }`
 
-**Example:**
+### `expoSQLiteDriver(db)`
+
+Wraps an expo-sqlite database instance into a `FireflyDriver`. Compatible with expo-sqlite v14 and v15.
+
 ```typescript
-import { createFirefly, withHydration } from 'redux-firefly';
+import { expoSQLiteDriver } from 'redux-firefly';
+import * as SQLite from 'expo-sqlite';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
-  database: db,
-  debug: __DEV__,
-});
+const driver = expoSQLiteDriver(SQLite.openDatabaseSync('app.db'));
+```
 
-const store = configureStore({
-  reducer: enhanceReducer({
-    todos: withHydration(todosSlice.reducer, {
-      query: 'SELECT * FROM todos',
-      transform: (rows) => rows.map(r => ({
-        id: r.id, text: r.text, completed: Boolean(r.completed),
-      })),
-    }),
-    user: userReducer,
-  }),
-  enhancers: (getDefaultEnhancers) =>
-    getDefaultEnhancers().concat(enhanceStore),
-  middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(middleware),
-});
+### `FireflyDriver` Interface
 
-await store.hydrated;
+Implement this interface to use a custom SQLite client:
+
+```typescript
+interface FireflyDriver {
+  runAsync(sql: string, params?: any[]): Promise<{ lastInsertRowId: number; changes: number }>;
+  getAllAsync(sql: string, params?: any[]): Promise<any[]>;
+  withTransactionAsync(callback: () => Promise<void>): Promise<void>;
+}
 ```
 
 ### `withHydration(reducer, config)`
@@ -83,6 +155,151 @@ Attaches hydration configuration to a reducer so it can be auto-discovered by `e
 - `config` (HydrationQuery): `{ query, params?, transform? }`
 
 **Returns:** The same reducer with hydration metadata attached
+
+Use this when you're not using `createFireflySlice` (which handles hydration automatically via its `hydration` option).
+
+### `createFireflySlice(options)` (Toolkit)
+
+Creates a Redux Toolkit slice with colocated Firefly effect, commit, and rollback handlers plus optional hydration. Import from `redux-firefly/toolkit`.
+
+**Parameters:**
+- `name` (string): Slice name
+- `initialState` (State | () => State): Initial state
+- `reducers` (`(fireflyReducer) => CaseReducers`): A callback that receives the `fireflyReducer` helper and returns case reducer definitions
+- `hydration?` (HydrationQuery): Hydration query config (equivalent to wrapping with `withHydration`)
+- `extraReducers?` (function): Standard RTK `extraReducers` builder callback
+
+Each case reducer defined via `fireflyReducer(...)` takes:
+- `reducer`: The Redux case reducer (called optimistically)
+- `effect`: The database operation — a static effect object, array (transaction), or function `(payload) => effect`
+- `prepare?`: Optional prepare callback for the action creator
+- `commit?`: Called on database success — receives `action.payload` (the original payload) and `action.meta.firefly.result`
+- `rollback?`: Called on database failure — receives `action.payload` and `action.meta.firefly.error`
+
+Commit/rollback handlers are dispatched automatically by the middleware using auto-generated action types: `{name}/{reducerKey}/commit` and `{name}/{reducerKey}/rollback`.
+
+**Example:**
+```typescript
+import { createFireflySlice } from 'redux-firefly/toolkit';
+import type { FireflyCommitAction, FireflyRollbackAction } from 'redux-firefly/toolkit';
+
+interface Todo {
+  id: string | number;
+  text: string;
+  completed: boolean;
+}
+
+const todosSlice = createFireflySlice({
+  name: 'todos',
+  initialState: [] as Todo[],
+  hydration: {
+    query: 'SELECT * FROM todos',
+    transform: (rows) => rows.map(r => ({
+      id: r.id, text: r.text, completed: Boolean(r.completed),
+    })),
+  },
+  reducers: (fireflyReducer) => ({
+    // Simple reducer (no database effect)
+    clearAll: () => [],
+
+    // Fire-and-forget INSERT (no commit/rollback)
+    addTodoSimple: fireflyReducer({
+      reducer: (state, action) => {
+        state.push({ id: Date.now(), text: action.payload.text, completed: false });
+      },
+      prepare: (text: string) => ({ payload: { text } }),
+      effect: (payload) => ({
+        type: 'INSERT',
+        table: 'todos',
+        values: { text: payload.text, completed: 0 },
+      }),
+    }),
+
+    // Optimistic INSERT with commit/rollback
+    addTodo: fireflyReducer({
+      reducer: (state, action) => {
+        state.push(action.payload);
+      },
+      prepare: (text: string) => ({
+        payload: { id: `temp_${Date.now()}`, text, completed: false } as Todo,
+      }),
+      effect: (payload) => ({
+        type: 'INSERT',
+        table: 'todos',
+        values: { text: payload.text, completed: 0 },
+      }),
+      commit: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.id = action.meta.firefly.result.insertId!;
+      },
+      rollback: (state, action) => {
+        return state.filter(t => t.id !== action.payload.id);
+      },
+    }),
+
+    // Optimistic UPDATE
+    toggleTodo: fireflyReducer({
+      reducer: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.completed = !todo.completed;
+      },
+      prepare: (id: number, currentCompleted: boolean) => ({
+        payload: { id, currentCompleted },
+      }),
+      effect: (payload) => ({
+        type: 'UPDATE',
+        table: 'todos',
+        values: { completed: payload.currentCompleted ? 0 : 1 },
+        where: { id: payload.id },
+      }),
+      rollback: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.completed = !todo.completed;
+      },
+    }),
+
+    // Optimistic DELETE
+    deleteTodo: fireflyReducer({
+      reducer: (state, action) => {
+        return state.filter(t => t.id !== action.payload.id);
+      },
+      prepare: (id: number, deletedTodo: Todo) => ({
+        payload: { id, deletedTodo },
+      }),
+      effect: (payload) => ({
+        type: 'DELETE',
+        table: 'todos',
+        where: { id: payload.id },
+      }),
+      rollback: (state, action) => {
+        state.push(action.payload.deletedTodo);
+      },
+    }),
+  }),
+});
+
+export const { addTodo, addTodoSimple, toggleTodo, deleteTodo, clearAll } = todosSlice.actions;
+export default todosSlice.reducer;
+```
+
+Since `hydration` is specified in the slice, store setup stays clean — no need to wrap with `withHydration` manually:
+
+```typescript
+const store = configureStore({
+  reducer: enhanceReducer({
+    todos: todosSlice.reducer, // hydration config is auto-discovered
+  }),
+  // ... middleware and enhancers
+});
+```
+
+#### Typed Commit/Rollback Actions
+
+Import `FireflyCommitAction` and `FireflyRollbackAction` from `redux-firefly/toolkit` for type-safe handlers:
+
+- **Commit** actions include `action.meta.firefly.result` (`OperationResult`) with `insertId`, `rowsAffected`, `rows`, etc.
+- **Rollback** actions include `action.meta.firefly.error` (`Error`)
+- Both receive `action.payload` — the original action payload, forwarded automatically.
 
 ### Effect Types
 
@@ -144,39 +361,62 @@ Attaches hydration configuration to a reducer so it can be auto-discovered by `e
 
 ### Transactions
 
-Execute multiple operations atomically by using an array of effects:
+Execute multiple operations atomically by returning an array of effects:
 
 ```typescript
-export const moveTodoToCategory = (todoId: number, categoryId: number) => ({
-  type: 'MOVE_TODO',
-  payload: { todoId, categoryId },
-  meta: {
-    firefly: {
-      // Array = transaction (all or nothing)
-      effect: [
-        {
-          type: 'UPDATE',
-          table: 'todos',
-          values: { category_id: categoryId },
-          where: { id: todoId },
-        },
-        {
-          type: 'UPDATE',
-          table: 'categories',
-          values: { updated_at: Date.now() },
-          where: { id: categoryId },
-        },
-      ],
-      commit: { type: 'MOVE_TODO_SUCCESS' },
-      rollback: { type: 'MOVE_TODO_FAILURE' },
-    },
+moveTodoToCategory: fireflyReducer({
+  reducer: (state, action) => {
+    const todo = state.find(t => t.id === action.payload.todoId);
+    if (todo) todo.categoryId = action.payload.categoryId;
   },
-});
+  prepare: (todoId: number, categoryId: number) => ({
+    payload: { todoId, categoryId },
+  }),
+  effect: (payload) => [
+    {
+      type: 'UPDATE',
+      table: 'todos',
+      values: { category_id: payload.categoryId },
+      where: { id: payload.todoId },
+    },
+    {
+      type: 'UPDATE',
+      table: 'categories',
+      values: { updated_at: Math.floor(Date.now() / 1000) },
+      where: { id: payload.categoryId },
+    },
+  ],
+  commit: (state, action) => {
+    const todo = state.find(t => t.id === action.payload.todoId);
+    if (todo) todo.syncing = false;
+  },
+  rollback: (state, action) => {
+    const todo = state.find(t => t.id === action.payload.todoId);
+    if (todo) todo.error = 'Failed to move category';
+  },
+}),
 ```
 
-### Complex Queries with RAW SQL
+For transactions, `action.meta.firefly.result.results` contains an array of individual `OperationResult` objects.
 
-For complex queries (joins, aggregations), use the RAW effect:
+### Static Effects
+
+When the effect doesn't depend on the payload, pass a static object instead of a function:
+
+```typescript
+deleteCompletedTodos: fireflyReducer({
+  reducer: (state) => state.filter(t => !t.completed),
+  effect: {
+    type: 'DELETE',
+    table: 'todos',
+    where: { completed: 1 },
+  },
+}),
+```
+
+### Plain Actions (without Toolkit)
+
+You can also dispatch plain Redux actions with `meta.firefly` — no toolkit required:
 
 ```typescript
 export const archiveOldTodos = () => ({
@@ -186,48 +426,14 @@ export const archiveOldTodos = () => ({
       effect: {
         type: 'RAW',
         sql: 'UPDATE todos SET archived = 1 WHERE created_at < ?',
-        params: [Date.now() - 30 * 86400000], // 30 days ago
+        params: [Date.now() - 30 * 86400000],
       },
+      commit: { type: 'ARCHIVE_OLD_TODOS_COMMIT' },
+      rollback: { type: 'ARCHIVE_OLD_TODOS_ROLLBACK' },
     },
   },
 });
 ```
-
-### Optimistic Updates with Commit/Rollback
-
-Handle success and failure for better UX with optimistic updates:
-
-```typescript
-export const addTodo = (text: string) => {
-  const tempId = `temp_${Date.now()}`;
-  return {
-    type: 'ADD_TODO_OPTIMISTIC',
-    payload: { id: tempId, text, completed: false },
-    meta: {
-      firefly: {
-        effect: {
-          type: 'INSERT',
-          table: 'todos',
-          values: { text, completed: 0 },
-        },
-        commit: {
-          type: 'ADD_TODO_COMMIT',
-          payload: { tempId },
-        },
-        rollback: {
-          type: 'ADD_TODO_ROLLBACK',
-          payload: { tempId },
-        },
-      },
-    },
-  };
-};
-```
-
-**In your reducer:**
-- `ADD_TODO_OPTIMISTIC`: Add todo with temp ID immediately
-- `ADD_TODO_COMMIT`: Replace temp ID with real database ID from `action.meta.firefly.result.insertId`
-- `ADD_TODO_ROLLBACK`: Remove optimistic todo on failure
 
 ## React Integration
 
@@ -249,6 +455,7 @@ import { FireflyGate } from 'redux-firefly/react';
 - `loading?` (ReactNode): Component to show while hydrating
 - `children` (ReactNode): App to render after hydration
 - `onBeforeHydrate?` (function): Callback invoked before hydration
+- `context?` (React.Context): Custom react-redux context for multi-store setups
 
 Alternatively, you can skip `FireflyGate` entirely and await the hydration promise:
 
@@ -256,19 +463,14 @@ Alternatively, you can skip `FireflyGate` entirely and await the hydration promi
 await store.hydrated;
 ```
 
-## TypeScript
+### Store Hydration API
 
-Redux-Firefly is written in TypeScript and provides comprehensive type definitions.
+The enhanced store exposes these hydration helpers:
 
 ```typescript
-import type {
-  FireflyAction,
-  FireflyEffect,
-  InsertEffect,
-  UpdateEffect,
-  DeleteEffect,
-  OperationResult,
-} from 'redux-firefly';
+store.hydrated              // Promise<void> — resolves when hydration completes
+store.isHydrated()          // boolean — synchronous check
+store.onHydrationChange(cb) // subscribe to hydration status changes; returns unsubscribe fn
 ```
 
 ## License

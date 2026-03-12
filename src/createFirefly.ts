@@ -1,7 +1,7 @@
-import type { Reducer, Store, StoreEnhancerStoreCreator } from 'redux';
+import type { Dispatch, Middleware, Reducer, StoreEnhancer, StoreEnhancerStoreCreator } from 'redux';
 import { combineReducers } from 'redux';
 import type { FireflyConfig, HydrationConfig, FireflyStore } from './types';
-import type { HydratedReducer } from './withHydration';
+import { isHydratedReducer } from './withHydration';
 import { createFireflyMiddleware } from './middleware';
 import { hydrateFromDatabase } from './hydration';
 
@@ -31,7 +31,11 @@ const HYDRATE_ACTION = '@@firefly/HYDRATE';
  *
  * await store.hydrated;
  */
-export function createFirefly(config: FireflyConfig) {
+export function createFirefly(config: FireflyConfig): {
+  middleware: Middleware;
+  enhanceReducer: <S extends Record<string, any>>(reducerMap: { [K in keyof S]: Reducer<S[K]> }) => Reducer<S>;
+  enhanceStore: StoreEnhancer;
+} {
   const { database, debug } = config;
 
   // Shared state between enhanceReducer and enhanceStore via closure
@@ -46,9 +50,8 @@ export function createFirefly(config: FireflyConfig) {
   ): Reducer<S> {
     // Extract hydration configs from reducers
     for (const [sliceName, reducer] of Object.entries(reducerMap)) {
-      const hydratedReducer = reducer as HydratedReducer;
-      if (hydratedReducer._fireflyHydration) {
-        hydrationConfig[sliceName] = hydratedReducer._fireflyHydration;
+      if (isHydratedReducer(reducer)) {
+        hydrationConfig[sliceName] = reducer._fireflyHydration;
       }
     }
 
@@ -67,21 +70,35 @@ export function createFirefly(config: FireflyConfig) {
         return { ...newState, ...action.payload };
       }
       return combinedReducer(state, action);
-    }) as Reducer<S>;
+    });
   }
 
   /**
    * Store enhancer that runs hydration after store creation and
    * adds hydration status methods to the store.
+   *
+   * Typed as a proper StoreEnhancer so it integrates with RTK's configureStore.
+   * The internal dispatch uses Dispatch (defaulting to UnknownAction) because
+   * Redux's generic action type parameter A can't be satisfied with a concrete
+   * internal action — this is a known TypeScript limitation that Redux's own
+   * applyMiddleware also works around.
    */
-  function enhanceStore(createStore: StoreEnhancerStoreCreator) {
-    return (reducer: Reducer, preloadedState?: any): Store & FireflyStore => {
+  function enhanceStore<NextExt extends {}, NextStateExt extends {}>(
+    createStore: StoreEnhancerStoreCreator<NextExt, NextStateExt>
+  ): StoreEnhancerStoreCreator<NextExt & FireflyStore, NextStateExt> {
+    return (reducer, preloadedState) => {
       const store = createStore(reducer, preloadedState);
+
+      // Capture dispatch typed for internal framework actions.
+      // Inside a generic enhancer, store.dispatch is Dispatch<A> where A is
+      // an unconstrained type variable. Redux stores accept UnknownAction at
+      // runtime, but TypeScript can't verify this in a generic context.
+      const dispatch: Dispatch = store.dispatch;
 
       let _hydrated = false;
       const _listeners = new Set<(hydrated: boolean) => void>();
 
-      const fireflyStore: Store & FireflyStore = Object.assign(store, {
+      const fireflyStore = Object.assign(store, {
         isHydrated: () => _hydrated,
         onHydrationChange: (callback: (hydrated: boolean) => void) => {
           _listeners.add(callback);
@@ -96,7 +113,7 @@ export function createFirefly(config: FireflyConfig) {
             console.log('[Firefly] Hydration complete:', Object.keys(hydratedState));
           }
 
-          store.dispatch({ type: HYDRATE_ACTION, payload: hydratedState });
+          dispatch({ type: HYDRATE_ACTION, payload: hydratedState });
 
           _hydrated = true;
           _listeners.forEach((cb) => cb(true));

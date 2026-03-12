@@ -1,7 +1,11 @@
 // Main API
 export { createFirefly } from './createFirefly';
-export { withHydration } from './withHydration';
+export { withHydration, isHydratedReducer } from './withHydration';
 export type { HydratedReducer } from './withHydration';
+
+// Drivers
+export { expoSQLiteDriver } from './drivers/expo-sqlite';
+export type { FireflyDriver } from './driver';
 
 // Type guards and utilities
 export { isFireflyAction } from './types';

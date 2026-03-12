@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from '../driver';
 import type { RawEffect, OperationResult } from '../types';
 
 /**
@@ -22,7 +22,7 @@ import type { RawEffect, OperationResult } from '../types';
  * })
  */
 export async function executeRaw(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: RawEffect
 ): Promise<OperationResult> {
   const { sql, params = [] } = effect;

@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from '../driver';
 import type { DeleteEffect, OperationResult } from '../types';
 import { buildWhereClause } from '../utils/sql';
 
@@ -16,7 +16,7 @@ import { buildWhereClause } from '../utils/sql';
  * })
  */
 export async function executeDelete(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: DeleteEffect
 ): Promise<OperationResult> {
   const { table, where } = effect;

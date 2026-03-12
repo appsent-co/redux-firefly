@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { createFirefly } from 'redux-firefly';
+import { createFirefly, expoSQLiteDriver } from 'redux-firefly';
 import { db, initDatabase } from '../database/schema';
 import todosReducer from './slices/todosSlice';
 import categoriesReducer from './slices/categoriesSlice';
@@ -10,7 +10,7 @@ import type { Todo, Category, Tag } from '../types';
 initDatabase();
 
 const { middleware, enhanceReducer, enhanceStore } = createFirefly({
-  database: db,
+  database: expoSQLiteDriver(db),
   onError: (error, action) => {
     console.error('[Firefly Error]', {
       error: error.message,
@@ -32,8 +32,6 @@ export const store = configureStore({
     categories: categoriesReducer,
     tags: tagsReducer,
   }),
-  enhancers: (getDefaultEnhancers) =>
-    getDefaultEnhancers().concat(enhanceStore),
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: {
@@ -41,6 +39,8 @@ export const store = configureStore({
         ignoredActionPaths: ['meta.firefly'],
       },
     }).concat(middleware),
+  enhancers: (getDefaultEnhancers) =>
+    getDefaultEnhancers().concat(enhanceStore),
 });
 
 // Export types for TypeScript

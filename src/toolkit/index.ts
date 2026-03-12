@@ -1,7 +1,10 @@
+
 export { createFireflySlice } from './createFireflySlice';
-export type { FireflySlice } from './createFireflySlice';
 export type {
-  FireflyCommitPayloadAction,
-  FireflyRollbackPayloadAction,
+  FireflyCaseReducerWithPrepareDef,
+} from './createFireflySlice';
+export type {
+  FireflyCommitAction,
+  FireflyRollbackAction,
 } from './types';
 export type { OperationResult, HydrationQuery } from '../types';

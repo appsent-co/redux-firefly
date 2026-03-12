@@ -1,6 +1,6 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
 import type { Action } from 'redux';
 import type { ReactReduxContextValue } from 'react-redux';
+import type { FireflyDriver } from './driver';
 
 /**
  * Supported database operation types
@@ -91,6 +91,8 @@ export interface FireflyMeta {
   commit?: Action & Record<string, unknown>;
   /** Optional action to dispatch on failed operation */
   rollback?: Action & Record<string, unknown>;
+  /** Original action payload, forwarded to commit/rollback actions */
+  originalPayload?: unknown;
 }
 
 /**
@@ -154,8 +156,8 @@ export function isFireflyAction(action: unknown): action is FireflyAction {
  * Configuration for the Firefly middleware
  */
 export interface FireflyConfig {
-  /** SQLite database instance */
-  database: SQLiteDatabase;
+  /** Database driver instance */
+  database: FireflyDriver;
   /** Optional error handler called when operations fail */
   onError?: (error: Error, action: FireflyAction) => void;
   /** Enable debug logging */

@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { FireflyDriver } from '../driver';
 import type { SelectEffect, OperationResult } from '../types';
 import { buildWhereClause } from '../utils/sql';
 
@@ -19,7 +19,7 @@ import { buildWhereClause } from '../utils/sql';
  * })
  */
 export async function executeSelect(
-  db: SQLiteDatabase,
+  db: FireflyDriver,
   effect: SelectEffect
 ): Promise<OperationResult> {
   const { table, columns = ['*'], where, orderBy, limit } = effect;

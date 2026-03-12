@@ -21,7 +21,7 @@ import { executeOperation } from './executor';
  *     getDefaultMiddleware().concat(fireflyMiddleware)
  * })
  */
-export function createFireflyMiddleware(config: FireflyConfig): Middleware {
+export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, any, any> {
   const { database, onError, debug } = config;
 
   return (store) => (next) => (action) => {
@@ -51,7 +51,8 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
           // Dispatch commit action if provided
           if (firefly.commit) {
             const commitAction = {
-              ...firefly.commit,
+              type: firefly.commit.type,
+              payload: firefly.originalPayload,
               meta: { firefly: { result: opResult } },
             };
 
@@ -70,7 +71,8 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
           // Dispatch rollback action if provided
           if (firefly.rollback) {
             const rollbackAction = {
-              ...firefly.rollback,
+              type: firefly.rollback.type,
+              payload: firefly.originalPayload,
               meta: { firefly: { error: opResult.error } },
             };
 
@@ -96,7 +98,8 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware {
         // Dispatch rollback on unexpected errors
         if (firefly.rollback) {
           const rollbackAction = {
-            ...firefly.rollback,
+            type: firefly.rollback.type,
+            payload: firefly.originalPayload,
             meta: { firefly: { error } },
           };
 

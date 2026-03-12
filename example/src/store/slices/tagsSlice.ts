@@ -1,5 +1,4 @@
-import type { PayloadAction } from '@reduxjs/toolkit';
-import { createFireflySlice, type FireflyCommitPayloadAction } from 'redux-firefly/toolkit';
+import { createFireflySlice } from 'redux-firefly/toolkit';
 import type { Tag, TagRow } from '../../types';
 
 const initialState: Tag[] = [];
@@ -18,10 +17,10 @@ const tagsSlice = createFireflySlice({
       }));
     },
   },
-  reducers: {
+  reducers: (fireflyReducer) => ({
     // Add tag with optimistic updates
-    addTag: {
-      reducer: (state, action: PayloadAction<Tag>) => {
+    addTag: fireflyReducer({
+      reducer: (state, action) => {
         state.push(action.payload);
       },
       prepare: (name: string, color: string) => {
@@ -34,41 +33,32 @@ const tagsSlice = createFireflySlice({
             color,
             createdAt: now,
           } as Tag,
-          meta: {
-            firefly: {
-              effect: {
-                type: 'INSERT' as const,
-                table: 'tags',
-                values: {
-                  name,
-                  color,
-                  created_at: Math.floor(now / 1000),
-                },
-              },
-              commit: { payload: { tempId } },
-              rollback: { payload: { tempId } },
-            },
-          },
         };
       },
-      commit: (state, action: FireflyCommitPayloadAction<{ tempId: any }>) => {
+      effect: (payload) => ({
+        type: 'INSERT' as const,
+        table: 'tags',
+        values: {
+          name: payload.name,
+          color: payload.color,
+          created_at: Math.floor((payload.createdAt ?? Date.now()) / 1000),
+        },
+      }),
+      commit: (state, action) => {
         const realId = action.meta.firefly.result.insertId;
-        const tag = state.find((t) => t.id === action.payload.tempId);
+        const tag = state.find((t) => t.id === action.payload.id);
         if (tag && realId) {
           tag.id = realId;
         }
       },
-      rollback: (state, action: PayloadAction<{ tempId: any }>) => {
-        return state.filter((t) => t.id !== action.payload.tempId);
+      rollback: (state, action) => {
+        return state.filter((t) => t.id !== action.payload.id);
       },
-    },
+    }),
 
     // Update tag
-    updateTag: {
-      reducer: (
-        state,
-        action: PayloadAction<{ id: number; name?: string; color?: string }>
-      ) => {
+    updateTag: fireflyReducer({
+      reducer: (state, action) => {
         const tag = state.find((t) => t.id === action.payload.id);
         if (tag) {
           if (action.payload.name) tag.name = action.payload.name;
@@ -77,42 +67,33 @@ const tagsSlice = createFireflySlice({
       },
       prepare: (id: number, updates: { name?: string; color?: string }) => ({
         payload: { id, ...updates },
-        meta: {
-          firefly: {
-            effect: {
-              type: 'UPDATE' as const,
-              table: 'tags',
-              values: updates,
-              where: { id },
-            },
-          },
-        },
       }),
-    },
+      effect: (payload) => ({
+        type: 'UPDATE' as const,
+        table: 'tags',
+        values: { name: payload.name, color: payload.color },
+        where: { id: payload.id },
+      }),
+    }),
 
     // Delete tag
-    deleteTag: {
-      reducer: (state, action: PayloadAction<{ id: number }>) => {
+    deleteTag: fireflyReducer({
+      reducer: (state, action) => {
         return state.filter((t) => t.id !== action.payload.id);
       },
       prepare: (id: number, deletedTag: Tag) => ({
-        payload: { id },
-        meta: {
-          firefly: {
-            effect: {
-              type: 'DELETE' as const,
-              table: 'tags',
-              where: { id },
-            },
-            rollback: { payload: { deletedTag } },
-          },
-        },
+        payload: { id, deletedTag },
       }),
-      rollback: (state, action: PayloadAction<{ deletedTag: Tag }>) => {
+      effect: (payload) => ({
+        type: 'DELETE' as const,
+        table: 'tags',
+        where: { id: payload.id },
+      }),
+      rollback: (state, action) => {
         state.push(action.payload.deletedTag);
       },
-    },
-  },
+    }),
+  }),
 });
 
 export const {
