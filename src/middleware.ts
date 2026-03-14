@@ -53,7 +53,7 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
             const commitAction = {
               type: firefly.commit.type,
               payload: firefly.originalPayload,
-              meta: { firefly: { result: opResult } },
+              meta: { firefly: { result: opResult.rows ?? opResult.results } },
             };
 
             if (debug) {

@@ -7,19 +7,45 @@ import type {
   SliceCaseReducers,
   ValidateSliceCaseReducers,
 } from '@reduxjs/toolkit';
-import type { FireflyEffect, FireflyCommitAction, FireflyRollbackAction, HydrationQuery } from '../types';
+import type {
+  FireflyEffect,
+  FireflyCommitAction,
+  FireflyRollbackAction,
+  HydrationQuery,
+  OperationResult,
+} from '../types';
+import type { DrizzleQuery, DrizzleHydrationQuery } from '../drizzle/types';
+import type { DriverMutationResult } from '../driver';
 import { withHydration } from '../withHydration';
 
+/**
+ * Infers the commit result type from the effect type.
+ *
+ * - DrizzleQuery<R> → R (e.g. SQLiteRunResult for inserts, Row[] for selects)
+ * - FireflyEffect (RAW) → DriverMutationResult
+ */
+/** Maps a tuple of DrizzleQuery types to a tuple of OperationResult types. */
+type MapDrizzleResults<T extends readonly DrizzleQuery[]> = {
+  [K in keyof T]: T[K] extends DrizzleQuery<infer R> ? OperationResult<R> : OperationResult;
+};
+
+type InferEffectResult<E> =
+  E extends DrizzleQuery<infer R> ? R :
+  E extends readonly DrizzleQuery[] ? MapDrizzleResults<E> :
+  E extends FireflyEffect ? DriverMutationResult :
+  E extends readonly FireflyEffect[] ? OperationResult[] :
+  any;
+
 /** Shared fields for all Firefly case reducer definitions. */
-interface FireflyCaseReducerDef<State, P> {
+interface FireflyCaseReducerDef<State, P, E = any> {
   reducer: (state: Draft<State>, action: PayloadAction<P>) => State | void;
-  effect: FireflyEffect | FireflyEffect[] | ((payload: P) => FireflyEffect | FireflyEffect[]);
-  commit?: (state: Draft<State>, action: FireflyCommitAction<P>) => State | void;
+  effect: E | ((payload: P) => E);
+  commit?: (state: Draft<State>, action: FireflyCommitAction<P, InferEffectResult<E>>) => State | void;
   rollback?: (state: Draft<State>, action: FireflyRollbackAction<P>) => State | void;
 }
 
 /** A Firefly case reducer definition with a prepare callback. */
-export interface FireflyCaseReducerWithPrepareDef<State, P, Args extends unknown[]> extends FireflyCaseReducerDef<State, P> {
+export interface FireflyCaseReducerWithPrepareDef<State, P, E, Args extends unknown[]> extends FireflyCaseReducerDef<State, P, E> {
   prepare: (...args: Args) => { payload: P };
 }
 
@@ -28,40 +54,37 @@ export interface FireflyCaseReducerWithPrepareDef<State, P, Args extends unknown
  *
  * Call this once per slice state type (curried), then use the returned function
  * to define individual case reducers. TypeScript infers the payload type from
- * the `reducer` (or `prepare`) you provide.
+ * the `reducer` (or `prepare`) you provide, and the result type from the
+ * effect (DrizzleQuery<R> → R, FireflyEffect → DriverMutationResult).
  *
  * @example
- * // At the top of your slice file, bind the state type once:
  * const fireflyReducer = createFireflyCaseReducer<Todo[]>();
  *
- * // Then use it in createFireflySlice (or createSlice) reducers:
  * const todosSlice = createFireflySlice({
  *   name: 'todos',
  *   initialState: [] as Todo[],
- *   reducers: {
+ *   reducers: (fireflyReducer) => ({
  *     addTodo: fireflyReducer({
  *       reducer: (state, action) => { state.push(action.payload); },
  *       prepare: (text: string) => ({ payload: { id: tempId(), text, completed: false } }),
- *       effect: (payload) => ({ type: 'INSERT', table: 'todos', values: payload }),
+ *       effect: (payload) => db.insert(todos).values({ text: payload.text }),
  *       commit: (state, action) => { ... },
  *       rollback: (state, action) => { state.pop(); },
  *     }),
- *   },
+ *   }),
  * });
  */
 export function createFireflyCaseReducer<State>() {
-  // Prepare overload first — TypeScript infers P from `prepare`'s return type,
-  // then contextually types `reducer`, `effect`, `commit`, and `rollback`.
-  function define<P, Args extends unknown[]>(
-    def: FireflyCaseReducerWithPrepareDef<State, P, Args>
-  ): FireflyCaseReducerWithPrepareDef<State, P, Args>;
-  // No-prepare overload — `{ prepare?: never }` ensures objects with a `prepare`
-  // field are never matched here, forcing them through the overload above.
-  // A default identity prepare is injected at runtime for RTK compatibility.
-  function define<P>(
-    def: FireflyCaseReducerDef<State, P> & { prepare?: never }
-  ): FireflyCaseReducerWithPrepareDef<State, P, []>;
-  function define(def: FireflyCaseReducerDef<any, any> | FireflyCaseReducerWithPrepareDef<any, any, any[]>) {
+  // Prepare overload — TypeScript infers P from `prepare`'s return type
+  // and E from the effect value (used to derive the commit result type).
+  function define<P, const E, Args extends unknown[]>(
+    def: FireflyCaseReducerWithPrepareDef<State, P, E, Args>
+  ): FireflyCaseReducerWithPrepareDef<State, P, E, Args>;
+  // No-prepare overload — a default identity prepare is injected at runtime.
+  function define<P, const E>(
+    def: FireflyCaseReducerDef<State, P, E> & { prepare?: never }
+  ): FireflyCaseReducerWithPrepareDef<State, P, E, []>;
+  function define(def: FireflyCaseReducerDef<any, any, any> | FireflyCaseReducerWithPrepareDef<any, any, any, any[]>) {
     if (!('prepare' in def) || !def.prepare) {
       return { ...def, prepare: (payload: any) => ({ payload }) };
     }
@@ -75,7 +98,7 @@ export function createFireflyCaseReducer<State>() {
  */
 function isFireflyReducer(
   def: unknown
-): def is FireflyCaseReducerDef<any, any> & { prepare: PrepareAction<any> } {
+): def is FireflyCaseReducerDef<any, any, any> & { prepare: PrepareAction<any> } {
   return (
     typeof def === 'object' &&
     def !== null &&
@@ -96,27 +119,7 @@ function isFireflyReducer(
  *
  * If `hydration` is provided, the returned `slice.reducer` will have
  * hydration metadata attached (equivalent to wrapping with `withHydration`).
- *
- * @example
- * const todosSlice = createFireflySlice({
- *   name: 'todos',
- *   initialState: [] as Todo[],
- *   hydration: {
- *     query: 'SELECT * FROM todos',
- *     transform: (rows) => rows.map(r => ({ ... })),
- *   },
- *   reducers: {
- *     addTodo: {
- *       reducer: (state, action) => { state.push(action.payload); },
- *       prepare: (text: string) => ({
- *         payload: { id: tempId(), text, completed: false },
- *       }),
- *       effect: (payload) => ({ type: 'INSERT', table: 'todos', values: { text: payload.text } }),
- *       commit: (state, action) => { ... },   // action.payload = original payload
- *       rollback: (state, action) => { ... }, // action.payload = original payload
- *     },
- *   },
- * });
+ * Supports both raw SQL queries and drizzle select queries for hydration.
  */
 
 /** The pre-typed helper function provided to the `reducers` callback. */
@@ -124,7 +127,7 @@ type FireflyReducerFactory<State> = ReturnType<typeof createFireflyCaseReducer<S
 
 interface CreateFireflySliceOptions<State, CR extends SliceCaseReducers<State>, Name extends string>
   extends Omit<CreateSliceOptions<State, CR, Name>, 'reducers'> {
-  hydration?: HydrationQuery;
+  hydration?: HydrationQuery | DrizzleHydrationQuery;
 }
 
 export function createFireflySlice<

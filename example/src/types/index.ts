@@ -51,39 +51,5 @@ export interface TodoFilters {
   searchText?: string;
 }
 
-// Database row types (as returned from SQLite)
-export interface TodoRow {
-  id: number;
-  text: string;
-  description: string | null;
-  completed: number; // SQLite stores booleans as 0/1
-  category_id: number | null;
-  priority: number;
-  due_date: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface TodoJoinRow extends TodoRow {
-  category_name: string | null;
-  category_color: string | null;
-  category_icon: string | null;
-  category_sort_order: number | null;
-  tags_data: string | null;
-}
-
-export interface CategoryRow {
-  id: number;
-  name: string;
-  color: string;
-  icon: string | null;
-  sort_order: number;
-  created_at: number;
-}
-
-export interface TagRow {
-  id: number;
-  name: string;
-  color: string;
-  created_at: number;
-}
+// Database row types are now inferred from drizzle table definitions
+// via InferSelectModel<typeof table> — see database/tables.ts

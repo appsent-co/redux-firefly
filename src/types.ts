@@ -1,92 +1,22 @@
 import type { Action } from 'redux';
 import type { ReactReduxContextValue } from 'react-redux';
 import type { FireflyDriver } from './driver';
+import type { DrizzleQuery, DrizzleDatabaseLike, DrizzleHydrationQuery } from './drizzle/types';
 
 /**
- * Supported database operation types
+ * A plain SQL effect.
  */
-export type EffectType = 'INSERT' | 'UPDATE' | 'DELETE' | 'SELECT' | 'RAW';
-
-/**
- * Where clause for SQL operations
- * Maps column names to their values
- */
-export type WhereClause = {
-  [key: string]: string | number | boolean | null;
-};
-
-/**
- * Base effect interface
- */
-export interface BaseEffect {
-  type: EffectType;
-}
-
-/**
- * INSERT effect - adds new rows to a table
- */
-export interface InsertEffect extends BaseEffect {
-  type: 'INSERT';
-  table: string;
-  values: Record<string, any>;
-}
-
-/**
- * UPDATE effect - modifies existing rows
- */
-export interface UpdateEffect extends BaseEffect {
-  type: 'UPDATE';
-  table: string;
-  values: Record<string, any>;
-  where: WhereClause;
-}
-
-/**
- * DELETE effect - removes rows from a table
- */
-export interface DeleteEffect extends BaseEffect {
-  type: 'DELETE';
-  table: string;
-  where: WhereClause;
-}
-
-/**
- * SELECT effect - queries rows from a table
- */
-export interface SelectEffect extends BaseEffect {
-  type: 'SELECT';
-  table: string;
-  columns?: string[];
-  where?: WhereClause;
-  orderBy?: string;
-  limit?: number;
-}
-
-/**
- * RAW effect - executes custom SQL
- */
-export interface RawEffect extends BaseEffect {
-  type: 'RAW';
+export interface FireflyEffect {
   sql: string;
   params?: any[];
 }
 
 /**
- * Union of all effect types
- */
-export type FireflyEffect =
-  | InsertEffect
-  | UpdateEffect
-  | DeleteEffect
-  | SelectEffect
-  | RawEffect;
-
-/**
  * Firefly metadata attached to Redux actions
  */
 export interface FireflyMeta {
-  /** Database operation(s) to execute - single or array for transactions */
-  effect: FireflyEffect | FireflyEffect[];
+  /** Database operation(s) to execute - single effect, array for transactions, or drizzle query */
+  effect: FireflyEffect | FireflyEffect[] | DrizzleQuery | DrizzleQuery[];
   /** Optional action to dispatch on successful operation */
   commit?: Action & Record<string, unknown>;
   /** Optional action to dispatch on failed operation */
@@ -108,13 +38,11 @@ export interface FireflyAction extends Action {
 /**
  * Action dispatched by the Firefly middleware on successful database operation
  */
-export interface FireflyCommitAction<P = any> extends Action {
+export interface FireflyCommitAction<P = any, R = any> extends Action {
   payload: P;
   meta: {
     firefly: {
-      result: OperationResult;
-      /** Results from transaction (array of OperationResult) */
-      results?: OperationResult[];
+      result: R;
     };
   };
 }
@@ -156,8 +84,8 @@ export function isFireflyAction(action: unknown): action is FireflyAction {
  * Configuration for the Firefly middleware
  */
 export interface FireflyConfig {
-  /** Database driver instance */
-  database: FireflyDriver;
+  /** Database driver instance or drizzle database */
+  database: FireflyDriver | DrizzleDatabaseLike;
   /** Optional error handler called when operations fail */
   onError?: (error: Error, action: FireflyAction) => void;
   /** Enable debug logging */
@@ -178,24 +106,20 @@ export interface HydrationQuery {
 
 /**
  * Hydration configuration for multiple slices
- * Maps slice names to their query configurations
+ * Maps slice names to their query configurations (SQL or drizzle)
  */
 export type HydrationConfig = {
-  [sliceName: string]: HydrationQuery;
+  [sliceName: string]: HydrationQuery | DrizzleHydrationQuery;
 };
 
 /**
  * Result of a database operation
  */
-export interface OperationResult {
+export interface OperationResult<T = any> {
   /** Whether the operation succeeded */
   success: boolean;
-  /** Last inserted row ID (for INSERT operations) */
-  insertId?: number;
-  /** Number of rows affected (for INSERT/UPDATE/DELETE) */
-  rowsAffected?: number;
-  /** Query results (for SELECT operations) */
-  rows?: any[];
+  /** Operation result — query rows, mutation metadata, or drizzle result */
+  rows?: T;
   /** Error if operation failed */
   error?: Error;
   /** Results from transaction (array of OperationResult) */

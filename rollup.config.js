@@ -108,4 +108,39 @@ export default [
     },
     plugins: [dts()],
   },
+  // Drizzle bundle
+  {
+    input: 'src/drizzle/index.ts',
+    output: [
+      {
+        file: 'dist/drizzle.js',
+        format: 'cjs',
+        sourcemap: true,
+        exports: 'named',
+      },
+      {
+        file: 'dist/drizzle.esm.js',
+        format: 'esm',
+        sourcemap: true,
+      },
+    ],
+    plugins: [
+      resolve(),
+      typescript({
+        tsconfig: './tsconfig.json',
+        declaration: false,
+        exclude: ['**/*.test.ts', '**/__tests__/**'],
+      }),
+    ],
+    external: ['drizzle-orm'],
+  },
+  // Drizzle type definitions
+  {
+    input: 'src/drizzle/index.ts',
+    output: {
+      file: 'dist/drizzle.d.ts',
+      format: 'esm',
+    },
+    plugins: [dts()],
+  },
 ];

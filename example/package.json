@@ -7,12 +7,15 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@react-navigation/bottom-tabs": "^6.5.11",
     "@react-navigation/native": "^6.1.9",
+    "@react-navigation/native-stack": "^6",
     "@reduxjs/toolkit": "^2.2.1",
+    "drizzle-orm": "^0.38.0",
     "expo": "~51.0.0",
     "expo-sqlite": "~14.0.6",
     "expo-status-bar": "~1.12.1",
@@ -27,6 +30,8 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "@types/react": "~18.2.45",
+    "babel-plugin-inline-import": "^3.0.0",
+    "drizzle-kit": "^0.30.0",
     "typescript": "~5.3.3"
   },
   "private": true

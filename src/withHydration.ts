@@ -1,11 +1,12 @@
 import type { Reducer } from 'redux';
 import type { HydrationQuery } from './types';
+import type { DrizzleHydrationQuery } from './drizzle/types';
 
 /**
  * Reducer with attached hydration metadata
  */
 export type HydratedReducer<S = unknown> = Reducer<S> & {
-  _fireflyHydration: HydrationQuery;
+  _fireflyHydration: HydrationQuery | DrizzleHydrationQuery;
 };
 
 /**
@@ -30,7 +31,7 @@ export function isHydratedReducer(reducer: Reducer): reducer is HydratedReducer 
 
 export function withHydration<S>(
   reducer: Reducer<S>,
-  config: HydrationQuery
+  config: HydrationQuery | DrizzleHydrationQuery
 ): HydratedReducer<S> {
   const hydratedReducer = reducer as HydratedReducer<S>;
   hydratedReducer._fireflyHydration = config;

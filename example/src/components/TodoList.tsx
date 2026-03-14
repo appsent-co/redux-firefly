@@ -1,13 +1,15 @@
 import React from 'react';
 import { FlatList, View, Text, StyleSheet, RefreshControl } from 'react-native';
 import TodoItem from './TodoItem';
-import type { Todo } from '../types';
+import type { Todo, Category } from '../types';
 
 interface TodoListProps {
   todos: Todo[];
   onToggle: (todo: Todo) => void;
   onDelete: (todo: Todo) => void;
   onPress?: (todo: Todo) => void;
+  onMoveToCategory?: (todo: Todo, categoryId: number) => void;
+  categories?: Category[];
   onRefresh?: () => void;
   refreshing?: boolean;
 }
@@ -25,6 +27,8 @@ export default function TodoList({
   onToggle,
   onDelete,
   onPress,
+  onMoveToCategory,
+  categories,
   onRefresh,
   refreshing,
 }: TodoListProps) {
@@ -48,6 +52,8 @@ export default function TodoList({
           onToggle={() => onToggle(item)}
           onDelete={() => onDelete(item)}
           onPress={() => onPress?.(item)}
+          categories={categories}
+          onMoveToCategory={(categoryId) => onMoveToCategory?.(item, categoryId)}
         />
       )}
       contentContainerStyle={todos.length === 0 ? styles.emptyList : undefined}

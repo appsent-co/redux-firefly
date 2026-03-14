@@ -1,12 +1,14 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
-import type { Todo } from '../types';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import type { Todo, Category } from '../types';
 
 interface TodoItemProps {
   todo: Todo;
   onToggle: () => void;
   onDelete: () => void;
   onPress?: () => void;
+  categories?: Category[];
+  onMoveToCategory?: (categoryId: number) => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface TodoItemProps {
  * - Priority visualization
  * - Category and tag display
  */
-export default function TodoItem({ todo, onToggle, onDelete, onPress }: TodoItemProps) {
+export default function TodoItem({ todo, onToggle, onDelete, onPress, categories, onMoveToCategory }: TodoItemProps) {
   const priorityColor = {
     1: '#34C759', // Low - green
     2: '#FF9500', // Medium - orange
@@ -27,6 +29,18 @@ export default function TodoItem({ todo, onToggle, onDelete, onPress }: TodoItem
 
   const isOverdue =
     todo.dueDate && todo.dueDate < Math.floor(Date.now() / 1000) && !todo.completed;
+
+  const handleMoveToCategory = () => {
+    if (!categories?.length || !onMoveToCategory) return;
+    const buttons = categories
+      .filter((c) => c.id !== todo.categoryId)
+      .map((c) => ({
+        text: `${c.icon ?? '📁'} ${c.name}`,
+        onPress: () => onMoveToCategory(c.id),
+      }));
+    if (buttons.length === 0) return;
+    Alert.alert('Move to category', undefined, [...buttons, { text: 'Cancel', style: 'cancel' }]);
+  };
 
   return (
     <View style={[styles.container, todo.completed && styles.completedContainer]}>
@@ -47,6 +61,7 @@ export default function TodoItem({ todo, onToggle, onDelete, onPress }: TodoItem
       <TouchableOpacity
         style={styles.content}
         onPress={onPress}
+        onLongPress={handleMoveToCategory}
         disabled={todo.syncing}
         activeOpacity={0.7}
       >

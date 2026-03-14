@@ -5,7 +5,14 @@ export type { HydratedReducer } from './withHydration';
 
 // Drivers
 export { expoSQLiteDriver } from './drivers/expo-sqlite';
-export type { FireflyDriver } from './driver';
+export type { FireflyDriver, DriverMutationResult } from './driver';
+
+// Drizzle types (re-exported for convenience)
+export type {
+  DrizzleQuery,
+  DrizzleDatabaseLike,
+  DrizzleHydrationQuery,
+} from './drizzle/types';
 
 // Type guards and utilities
 export { isFireflyAction } from './types';
@@ -14,13 +21,6 @@ export { isFireflyAction } from './types';
 export type {
   // Effects
   FireflyEffect,
-  InsertEffect,
-  UpdateEffect,
-  DeleteEffect,
-  SelectEffect,
-  RawEffect,
-  EffectType,
-  BaseEffect,
 
   // Action & Metadata
   FireflyAction,
@@ -41,9 +41,6 @@ export type {
 
   // React
   FireflyGateProps,
-
-  // Utilities
-  WhereClause,
 } from './types';
 
 // Error classes

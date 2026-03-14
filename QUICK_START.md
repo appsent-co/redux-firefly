@@ -57,13 +57,12 @@ const todosSlice = createFireflySlice({
         payload: { id: `temp_${Date.now()}`, text, completed: false } as Todo,
       }),
       effect: (payload) => ({
-        type: 'INSERT',
-        table: 'todos',
-        values: { text: payload.text, completed: 0 },
+        sql: 'INSERT INTO todos (text, completed) VALUES (?, ?)',
+        params: [payload.text, 0],
       }),
       commit: (state, action) => {
         const todo = state.find(t => t.id === action.payload.id);
-        if (todo) todo.id = action.meta.firefly.result.insertId!;
+        if (todo) todo.id = action.meta.firefly.result.lastInsertRowId;
       },
       rollback: (state, action) => {
         return state.filter(t => t.id !== action.payload.id);
@@ -79,10 +78,8 @@ const todosSlice = createFireflySlice({
         payload: { id, currentCompleted },
       }),
       effect: (payload) => ({
-        type: 'UPDATE',
-        table: 'todos',
-        values: { completed: payload.currentCompleted ? 0 : 1 },
-        where: { id: payload.id },
+        sql: 'UPDATE todos SET completed = ? WHERE id = ?',
+        params: [payload.currentCompleted ? 0 : 1, payload.id],
       }),
       rollback: (state, action) => {
         const todo = state.find(t => t.id === action.payload.id);
@@ -98,9 +95,8 @@ const todosSlice = createFireflySlice({
         payload: { id },
       }),
       effect: (payload) => ({
-        type: 'DELETE',
-        table: 'todos',
-        where: { id: payload.id },
+        sql: 'DELETE FROM todos WHERE id = ?',
+        params: [payload.id],
       }),
     }),
   }),
@@ -177,6 +173,141 @@ export default function App() {
   );
 }
 ```
+
+---
+
+## Using Drizzle ORM (Alternative)
+
+Prefer Drizzle ORM over raw SQL? Redux-Firefly supports Drizzle query builders as a drop-in replacement for effect objects.
+
+### Install Drizzle
+
+```bash
+npm install drizzle-orm
+```
+
+### 2a. Define Schema with Drizzle
+
+`src/tables.ts`:
+```typescript
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+
+export const todos = sqliteTable('todos', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  text: text('text').notNull(),
+  completed: integer('completed', { mode: 'boolean' }).default(false).notNull(),
+});
+```
+
+`src/db.ts`:
+```typescript
+import * as SQLite from 'expo-sqlite';
+import { drizzle } from 'drizzle-orm/expo-sqlite';
+
+const expoDb = SQLite.openDatabaseSync('app.db');
+export const db = drizzle(expoDb);
+```
+
+> You'll still need to create tables via migrations or raw SQL. See [Drizzle migrations](https://orm.drizzle.team/docs/migrations) for details.
+
+### 3a. Define a Slice with Drizzle Effects
+
+`src/todosSlice.ts`:
+```typescript
+import { createFireflySlice } from 'redux-firefly/toolkit';
+import { eq, desc } from 'drizzle-orm';
+import { db } from './db';
+import { todos } from './tables';
+
+interface Todo {
+  id: string | number;
+  text: string;
+  completed: boolean;
+}
+
+const todosSlice = createFireflySlice({
+  name: 'todos',
+  initialState: [] as Todo[],
+  hydration: {
+    query: db.select().from(todos).orderBy(desc(todos.id)),
+    transform: (rows) => rows.map(r => ({
+      id: r.id, text: r.text, completed: r.completed,
+    })),
+  },
+  reducers: (fireflyReducer) => ({
+    addTodo: fireflyReducer({
+      reducer: (state, action) => { state.push(action.payload); },
+      prepare: (text: string) => ({
+        payload: { id: `temp_${Date.now()}`, text, completed: false } as Todo,
+      }),
+      effect: (payload) => db.insert(todos).values({ text: payload.text }),
+      commit: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.id = action.meta.firefly.result.insertId!;
+      },
+      rollback: (state, action) => state.filter(t => t.id !== action.payload.id),
+    }),
+
+    toggleTodo: fireflyReducer({
+      reducer: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.completed = !todo.completed;
+      },
+      prepare: (id: number, currentCompleted: boolean) => ({
+        payload: { id, currentCompleted },
+      }),
+      effect: (payload) =>
+        db.update(todos)
+          .set({ completed: !payload.currentCompleted })
+          .where(eq(todos.id, payload.id)),
+      rollback: (state, action) => {
+        const todo = state.find(t => t.id === action.payload.id);
+        if (todo) todo.completed = !todo.completed;
+      },
+    }),
+
+    deleteTodo: fireflyReducer({
+      reducer: (state, action) => state.filter(t => t.id !== action.payload.id),
+      prepare: (id: number) => ({ payload: { id } }),
+      effect: (payload) => db.delete(todos).where(eq(todos.id, payload.id)),
+    }),
+  }),
+});
+
+export const { addTodo, toggleTodo, deleteTodo } = todosSlice.actions;
+export default todosSlice.reducer;
+```
+
+### 4a. Configure Store (Drizzle)
+
+`src/store.ts`:
+```typescript
+import { configureStore } from '@reduxjs/toolkit';
+import { createFirefly } from 'redux-firefly';
+import { db } from './db';
+import todosReducer from './todosSlice';
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: db, // pass drizzle instance directly — no driver wrapper needed
+  debug: __DEV__,
+});
+
+export const store = configureStore({
+  reducer: enhanceReducer({ todos: todosReducer }),
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: { ignoredActionPaths: ['meta.firefly'] },
+    }).concat(middleware),
+  enhancers: (getDefaultEnhancers) =>
+    getDefaultEnhancers().concat(enhanceStore),
+});
+```
+
+Steps 5 (App setup) and the React component remain identical — see above.
+
+For the full Drizzle API (transactions, JOINs, SELECT queries), see the [Drizzle ORM section](README.md#drizzle-orm) in the README.
+
+---
 
 ## That's It!
 
