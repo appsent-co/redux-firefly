@@ -4,37 +4,19 @@ import type {
   Draft,
   PayloadAction,
   PrepareAction,
+  Slice,
   SliceCaseReducers,
+  SliceSelectors,
   ValidateSliceCaseReducers,
 } from '@reduxjs/toolkit';
 import type {
-  FireflyEffect,
   FireflyCommitAction,
   FireflyRollbackAction,
   HydrationQuery,
-  OperationResult,
+  InferEffectResult,
 } from '../types';
 import type { DrizzleQuery, DrizzleHydrationQuery } from '../drizzle/types';
-import type { DriverMutationResult } from '../driver';
 import { withHydration } from '../withHydration';
-
-/**
- * Infers the commit result type from the effect type.
- *
- * - DrizzleQuery<R> → R (e.g. SQLiteRunResult for inserts, Row[] for selects)
- * - FireflyEffect (RAW) → DriverMutationResult
- */
-/** Maps a tuple of DrizzleQuery types to a tuple of OperationResult types. */
-type MapDrizzleResults<T extends readonly DrizzleQuery[]> = {
-  [K in keyof T]: T[K] extends DrizzleQuery<infer R> ? OperationResult<R> : OperationResult;
-};
-
-type InferEffectResult<E> =
-  E extends DrizzleQuery<infer R> ? R :
-  E extends readonly DrizzleQuery[] ? MapDrizzleResults<E> :
-  E extends FireflyEffect ? DriverMutationResult :
-  E extends readonly FireflyEffect[] ? OperationResult[] :
-  any;
 
 /** Shared fields for all Firefly case reducer definitions. */
 interface FireflyCaseReducerDef<State, P, E = any> {
@@ -127,15 +109,34 @@ type FireflyReducerFactory<State> = ReturnType<typeof createFireflyCaseReducer<S
 
 interface CreateFireflySliceOptions<State, CR extends SliceCaseReducers<State>, Name extends string>
   extends Omit<CreateSliceOptions<State, CR, Name>, 'reducers'> {
-  hydration?: HydrationQuery | DrizzleHydrationQuery;
 }
 
+// Overload: Drizzle hydration with typed query inference
+export function createFireflySlice<
+  State,
+  Name extends string,
+  CR extends SliceCaseReducers<State>,
+  const Q extends DrizzleQuery | readonly DrizzleQuery[],
+>(options: CreateFireflySliceOptions<State, CR, Name> & {
+  reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
+  hydration: DrizzleHydrationQuery<Q, State>;
+}): Slice<State, CR, Name, Name, SliceSelectors<State>>;
+// Overload: SQL hydration or no hydration
 export function createFireflySlice<
   State,
   Name extends string,
   CR extends SliceCaseReducers<State>,
 >(options: CreateFireflySliceOptions<State, CR, Name> & {
   reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
+  hydration?: HydrationQuery;
+}): Slice<State, CR, Name, Name, SliceSelectors<State>>;
+export function createFireflySlice<
+  State,
+  Name extends string,
+  CR extends SliceCaseReducers<State>,
+>(options: CreateFireflySliceOptions<State, CR, Name> & {
+  reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
+  hydration?: HydrationQuery | DrizzleHydrationQuery<any, State>;
 }) {
   const { name, reducers: reducersFactory, hydration, extraReducers: userExtraReducers, ...rest } = options;
 
@@ -148,7 +149,7 @@ export function createFireflySlice<
   }> = [];
 
   // Build a clean reducers map for createSlice
-  for (const [key, def] of Object.entries(reducers)) {
+  for (const [key, def] of Object.entries(reducers as Record<string, unknown>)) {
     if (isFireflyReducer(def)) {
       const commitType = `${name}/${key}/commit`;
       const rollbackType = `${name}/${key}/rollback`;

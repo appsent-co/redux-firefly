@@ -230,6 +230,7 @@ const todosSlice = createFireflySlice({
   initialState: [] as Todo[],
   hydration: {
     query: db.select().from(todos).orderBy(desc(todos.id)),
+    // rows is automatically typed from the query — no manual annotations needed
     transform: (rows) => rows.map(r => ({
       id: r.id, text: r.text, completed: r.completed,
     })),
@@ -305,7 +306,7 @@ export const store = configureStore({
 
 Steps 5 (App setup) and the React component remain identical — see above.
 
-For the full Drizzle API (transactions, JOINs, SELECT queries), see the [Drizzle ORM section](README.md#drizzle-orm) in the README.
+For the full Drizzle API (transactions, JOINs, SELECT queries, multi-query hydration), see the [Drizzle ORM section](README.md#drizzle-orm) in the README.
 
 ---
 

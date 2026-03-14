@@ -1,5 +1,5 @@
 import type { FireflyDriver } from './driver';
-import type { HydrationConfig } from './types';
+import type { HydrationConfig, HydrationQuery, OperationResult } from './types';
 import type { DrizzleDatabaseLike } from './drizzle/types';
 import { isDrizzleHydrationQuery } from './drizzle/detect';
 
@@ -18,13 +18,26 @@ export async function hydrateFromDatabase(
     entries.map(async ([sliceName, queryConfig]) => {
       try {
         if (isDrizzleHydrationQuery(queryConfig)) {
-          // Drizzle hydration: query is self-contained, just await it
-          const rows = await queryConfig.query;
+          const query = queryConfig.query;
+
+          if (Array.isArray(query)) {
+            // Multiple queries: await all and wrap each in OperationResult
+            const results = await Promise.all(
+              query.map(async (q): Promise<OperationResult> => {
+                const rows = await q;
+                return { success: true, rows };
+              })
+            );
+            return [sliceName, queryConfig.transform ? queryConfig.transform(results) : results] as const;
+          }
+
+          // Single drizzle query: just await it
+          const rows = await query;
           return [sliceName, queryConfig.transform ? queryConfig.transform(rows) : rows] as const;
         }
 
         // Plain SQL hydration
-        const { query, params = [], transform } = queryConfig;
+        const { query, params = [], transform } = queryConfig as HydrationQuery;
         const rows = await (db as FireflyDriver).getAllAsync(query, params);
         return [sliceName, transform ? transform(rows) : rows] as const;
       } catch (error) {

@@ -24,15 +24,24 @@ export interface DrizzleDatabaseLike {
 }
 
 /**
- * Hydration query using a drizzle select query.
- * Returns typed results directly — no transform needed.
+ * Hydration query using drizzle select query(ies).
+ * Supports a single query or a tuple of queries.
+ * When using a tuple, transform receives an array of OperationResult matching each query's result type.
  */
-export interface DrizzleHydrationQuery<T = any> {
-  query: DrizzleQuery<T>;
-  transform?: (rows: T) => any;
+export interface DrizzleHydrationQuery<Q extends DrizzleQuery | readonly DrizzleQuery[] = DrizzleQuery, S = any> {
+  query: Q;
+  transform?: (rows: InferHydrationResult<Q>) => S;
 }
 
-/**
- * Extract result type from a DrizzleQuery.
- */
-export type InferDrizzleResult<Q> = Q extends DrizzleQuery<infer T> ? T : any;
+/** Infers the transform input type for hydration queries. */
+export type InferHydrationResult<Q> =
+  Q extends DrizzleQuery<infer T> ? T :
+  Q extends readonly DrizzleQuery[] ? MapDrizzleResults<Q> :
+  any;
+
+/** Maps a tuple of DrizzleQuery types to a tuple of OperationResult types. */
+import type { OperationResult } from '../types';
+
+export type MapDrizzleResults<T extends readonly DrizzleQuery[]> = {
+  [K in keyof T]: T[K] extends DrizzleQuery<infer R> ? OperationResult<R> : OperationResult;
+};

@@ -1,7 +1,8 @@
 import type { Action } from 'redux';
 import type { ReactReduxContextValue } from 'react-redux';
 import type { FireflyDriver } from './driver';
-import type { DrizzleQuery, DrizzleDatabaseLike, DrizzleHydrationQuery } from './drizzle/types';
+import type { DrizzleQuery, DrizzleDatabaseLike, DrizzleHydrationQuery, MapDrizzleResults } from './drizzle/types';
+import type { DriverMutationResult } from './driver';
 
 /**
  * A plain SQL effect.
@@ -109,8 +110,23 @@ export interface HydrationQuery {
  * Maps slice names to their query configurations (SQL or drizzle)
  */
 export type HydrationConfig = {
-  [sliceName: string]: HydrationQuery | DrizzleHydrationQuery;
+  [sliceName: string]: HydrationQuery | DrizzleHydrationQuery<any, any>;
 };
+
+/**
+ * Infers the commit result type from the effect type.
+ *
+ * - DrizzleQuery<R> → R (e.g. SQLiteRunResult for inserts, Row[] for selects)
+ * - DrizzleQuery[] → MapDrizzleResults (tuple of OperationResult per query)
+ * - FireflyEffect (RAW) → DriverMutationResult
+ * - FireflyEffect[] → OperationResult[]
+ */
+export type InferEffectResult<E> =
+  E extends DrizzleQuery<infer R> ? R :
+  E extends readonly DrizzleQuery[] ? MapDrizzleResults<E> :
+  E extends FireflyEffect ? DriverMutationResult :
+  E extends readonly FireflyEffect[] ? OperationResult[] :
+  any;
 
 /**
  * Result of a database operation

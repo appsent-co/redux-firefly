@@ -3,7 +3,8 @@ export type {
   DrizzleQuery,
   DrizzleDatabaseLike,
   DrizzleHydrationQuery,
-  InferDrizzleResult,
+  MapDrizzleResults,
+  InferHydrationResult,
 } from './types';
 
 // Detection utilities

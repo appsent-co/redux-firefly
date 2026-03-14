@@ -13,7 +13,7 @@ const categoriesSlice = createFireflySlice({
   initialState,
   hydration: {
     query: db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)),
-    transform: (rows: CategoryRow[]): Category[] => {
+    transform: (rows): Category[] => {
       return rows.map((row) => ({
         id: row.id,
         name: row.name,

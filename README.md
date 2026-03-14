@@ -187,7 +187,7 @@ Creates a Redux Toolkit slice with colocated Firefly effect, commit, and rollbac
 - `name` (string): Slice name
 - `initialState` (State | () => State): Initial state
 - `reducers` (`(fireflyReducer) => CaseReducers`): A callback that receives the `fireflyReducer` helper and returns case reducer definitions
-- `hydration?` (HydrationQuery): Hydration query config (equivalent to wrapping with `withHydration`)
+- `hydration?` (HydrationQuery | DrizzleHydrationQuery): Hydration query config (equivalent to wrapping with `withHydration`). For Drizzle queries, `transform` receives fully typed rows inferred from the query. Supports a single query or an array of queries (see [Drizzle Hydration](#drizzle-hydration)).
 - `extraReducers?` (function): Standard RTK `extraReducers` builder callback
 
 Each case reducer defined via `fireflyReducer(...)` takes:
@@ -426,7 +426,7 @@ const todosSlice = createFireflySlice({
 
 ### Drizzle Hydration
 
-Pass a Drizzle query as the `query` property in your hydration config. Use `transform` to shape the rows into your state:
+Pass a Drizzle query as the `query` property in your hydration config. The `transform` callback receives **fully typed rows** inferred from your query — no manual type annotations needed:
 
 ```typescript
 import { eq, asc, desc } from 'drizzle-orm';
@@ -445,12 +445,39 @@ const todosSlice = createFireflySlice({
       .from(todos)
       .leftJoin(categories, eq(todos.categoryId, categories.id))
       .orderBy(asc(todos.completed), desc(todos.createdAt)),
+    // rows is automatically typed as { id: number; text: string; completed: boolean; categoryName: string | null }[]
     transform: (rows) => rows.map(row => ({
       id: row.id,
       text: row.text,
       completed: row.completed,
       category: row.categoryName ?? null,
     })),
+  },
+  reducers: (fireflyReducer) => ({ /* ... */ }),
+});
+```
+
+#### Multiple Hydration Queries
+
+Pass an array of Drizzle queries to hydrate from multiple tables. The `transform` callback receives a typed tuple of `OperationResult` objects, one per query:
+
+```typescript
+import { asc } from 'drizzle-orm';
+import { todos, categories } from './tables';
+
+const appSlice = createFireflySlice({
+  name: 'app',
+  initialState: { todos: [], categories: [] } as AppState,
+  hydration: {
+    query: [
+      db.select().from(todos).orderBy(asc(todos.createdAt)),
+      db.select().from(categories).orderBy(asc(categories.name)),
+    ],
+    // results is typed as [OperationResult<Todo[]>, OperationResult<Category[]>]
+    transform: (results) => ({
+      todos: results[0].rows ?? [],
+      categories: results[1].rows ?? [],
+    }),
   },
   reducers: (fireflyReducer) => ({ /* ... */ }),
 });
