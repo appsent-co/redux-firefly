@@ -34,7 +34,7 @@ const HYDRATE_ACTION = '@@firefly/HYDRATE';
 export function createFirefly(config: FireflyConfig): {
   middleware: Middleware;
   enhanceReducer: <S extends Record<string, any>>(reducerMap: { [K in keyof S]: Reducer<S[K]> }) => Reducer<S>;
-  enhanceStore: StoreEnhancer;
+  enhanceStore: StoreEnhancer<FireflyStore>;
 } {
   const { database, debug } = config;
 

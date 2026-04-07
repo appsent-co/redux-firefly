@@ -105,7 +105,14 @@ function isFireflyReducer(
  */
 
 /** The pre-typed helper function provided to the `reducers` callback. */
-type FireflyReducerFactory<State> = ReturnType<typeof createFireflyCaseReducer<State>>;
+type FireflyReducerFactory<State> = {
+  <P, const E, Args extends unknown[]>(
+    def: FireflyCaseReducerWithPrepareDef<State, P, E, Args>
+  ): FireflyCaseReducerWithPrepareDef<State, P, E, Args>;
+  <P, const E>(
+    def: FireflyCaseReducerDef<State, P, E> & { prepare?: never }
+  ): FireflyCaseReducerWithPrepareDef<State, P, E, []>;
+};
 
 interface CreateFireflySliceOptions<State, CR extends SliceCaseReducers<State>, Name extends string>
   extends Omit<CreateSliceOptions<State, CR, Name>, 'reducers'> {
