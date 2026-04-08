@@ -42,10 +42,8 @@ export function isFireflyDriver(db: unknown): db is FireflyDriver {
  * Checks if a hydration query is a drizzle hydration query.
  */
 export function isDrizzleHydrationQuery(q: unknown): q is DrizzleHydrationQuery {
-  return (
-    typeof q === 'object' &&
-    q !== null &&
-    'query' in q &&
-    isDrizzleQuery((q as any).query)
-  );
+  if (typeof q !== 'object' || q === null || !('query' in q)) return false;
+  const query = (q as any).query;
+  return isDrizzleQuery(query) ||
+    (Array.isArray(query) && query.length > 0 && isDrizzleQuery(query[0]));
 }
