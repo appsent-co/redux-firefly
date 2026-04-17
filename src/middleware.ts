@@ -22,7 +22,11 @@ import { executeOperation } from './executor';
  * })
  */
 export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, any, any> {
-  const { database, onError, debug } = config;
+  const { database, onError, debug, serializeEffects = true } = config;
+
+  // Single-connection drivers (expo-sqlite, better-sqlite3) reject a second
+  // `BEGIN` while one is already open. Pooled drivers can opt out.
+  let queue: Promise<unknown> = Promise.resolve();
 
   return (store) => (next) => (action) => {
     // Pass action through to reducer first (for optimistic updates)
@@ -40,77 +44,78 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
       console.log('[Firefly] Effect:', firefly.effect);
     }
 
-    // Execute database operation asynchronously
-    executeOperation(database, firefly.effect)
-      .then((opResult) => {
-        if (opResult.success) {
-          if (debug) {
-            console.log('[Firefly] Operation succeeded:', opResult);
-          }
-
-          // Dispatch commit action if provided
-          if (firefly.commit) {
-            const commitAction = {
-              type: firefly.commit.type,
-              payload: firefly.originalPayload,
-              meta: { firefly: { result: opResult.rows ?? opResult.results } },
-            };
-
+    const run = () =>
+      executeOperation(database, firefly.effect)
+        .then((opResult) => {
+          if (opResult.success) {
             if (debug) {
-              console.log('[Firefly] Dispatching commit:', commitAction.type);
+              console.log('[Firefly] Operation succeeded:', opResult);
             }
 
-            store.dispatch(commitAction);
+            if (firefly.commit) {
+              const commitAction = {
+                type: firefly.commit.type,
+                payload: firefly.originalPayload,
+                meta: { firefly: { result: opResult.rows ?? opResult.results } },
+              };
+
+              if (debug) {
+                console.log('[Firefly] Dispatching commit:', commitAction.type);
+              }
+
+              store.dispatch(commitAction);
+            }
+          } else {
+            if (debug) {
+              console.error('[Firefly] Operation failed:', opResult.error);
+            }
+
+            if (firefly.rollback) {
+              const rollbackAction = {
+                type: firefly.rollback.type,
+                payload: firefly.originalPayload,
+                meta: { firefly: { error: opResult.error } },
+              };
+
+              if (debug) {
+                console.log('[Firefly] Dispatching rollback:', rollbackAction.type);
+              }
+
+              store.dispatch(rollbackAction);
+            }
+
+            if (onError && opResult.error) {
+              onError(opResult.error, action);
+            }
           }
-        } else {
-          // Operation failed
+        })
+        .catch((error: Error) => {
           if (debug) {
-            console.error('[Firefly] Operation failed:', opResult.error);
+            console.error('[Firefly] Unexpected error:', error);
           }
 
-          // Dispatch rollback action if provided
           if (firefly.rollback) {
             const rollbackAction = {
               type: firefly.rollback.type,
               payload: firefly.originalPayload,
-              meta: { firefly: { error: opResult.error } },
+              meta: { firefly: { error } },
             };
-
-            if (debug) {
-              console.log('[Firefly] Dispatching rollback:', rollbackAction.type);
-            }
 
             store.dispatch(rollbackAction);
           }
 
-          // Call error handler if provided
-          if (onError && opResult.error) {
-            onError(opResult.error, action);
+          if (onError) {
+            onError(error, action);
           }
-        }
-      })
-      .catch((error: Error) => {
-        // Unexpected error during operation execution
-        if (debug) {
-          console.error('[Firefly] Unexpected error:', error);
-        }
+        });
 
-        // Dispatch rollback on unexpected errors
-        if (firefly.rollback) {
-          const rollbackAction = {
-            type: firefly.rollback.type,
-            payload: firefly.originalPayload,
-            meta: { firefly: { error } },
-          };
-
-          store.dispatch(rollbackAction);
-        }
-
-        // Call error handler
-        if (onError) {
-          onError(error, action);
-        }
-      });
+    if (serializeEffects) {
+      // Same handler for fulfilled and rejected so one throwing effect
+      // can't poison the queue for subsequent dispatches.
+      queue = queue.then(run, run);
+    } else {
+      run();
+    }
 
     return result;
   };

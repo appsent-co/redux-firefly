@@ -91,6 +91,15 @@ export interface FireflyConfig {
   onError?: (error: Error, action: FireflyAction) => void;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Serialize middleware DB effects so only one runs at a time.
+   * Required for single-connection drivers (expo-sqlite, better-sqlite3) to
+   * avoid "cannot start a transaction within a transaction". Set `false` for
+   * pooled drivers (pg, mysql2) where the pool handles concurrency and
+   * serialization would throw away real parallelism.
+   * @default true
+   */
+  serializeEffects?: boolean;
 }
 
 /**
