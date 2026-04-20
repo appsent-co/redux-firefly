@@ -14,3 +14,6 @@ export {
   isFireflyDriver,
   isDrizzleHydrationQuery,
 } from './detect';
+
+// Builders
+export { fireflyHydration } from './hydrate';

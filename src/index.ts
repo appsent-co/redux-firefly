@@ -2,6 +2,7 @@
 export { createFirefly } from './createFirefly';
 export { withHydration, isHydratedReducer } from './withHydration';
 export type { HydratedReducer } from './withHydration';
+export { fireflyHydration } from './drizzle/hydrate';
 
 // Drivers
 export { expoSQLiteDriver } from './drivers/expo-sqlite';

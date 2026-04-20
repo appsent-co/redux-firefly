@@ -28,7 +28,10 @@ export interface DrizzleDatabaseLike {
  * Supports a single query or a tuple of queries.
  * When using a tuple, transform receives an array of OperationResult matching each query's result type.
  */
-export interface DrizzleHydrationQuery<Q extends DrizzleQuery | readonly DrizzleQuery[] = DrizzleQuery, S = any> {
+export interface DrizzleHydrationQuery<
+  Q extends DrizzleQuery | readonly DrizzleQuery[] = DrizzleQuery,
+  S = InferHydrationResult<Q>,
+> {
   query: Q;
   transform?: (rows: InferHydrationResult<Q>) => S;
 }
