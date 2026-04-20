@@ -1,6 +1,6 @@
 {
   "name": "redux-firefly",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Redux middleware for persisting state to SQLite in React Native",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
