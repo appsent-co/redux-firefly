@@ -10,13 +10,14 @@ import type {
   ValidateSliceCaseReducers,
 } from '@reduxjs/toolkit';
 import type {
+  ApplyRowsConfig,
   FireflyCommitAction,
   FireflyRollbackAction,
   HydrationQuery,
   InferEffectResult,
 } from '../types';
 import type { DrizzleQuery, DrizzleHydrationQuery } from '../drizzle/types';
-import { withHydration } from '../withHydration';
+import { applyRows as attachApplyRows, withHydration } from '../withHydration';
 
 /** Shared fields for all Firefly case reducer definitions. */
 interface FireflyCaseReducerDef<State, P, E = any> {
@@ -127,6 +128,7 @@ export function createFireflySlice<
 >(options: CreateFireflySliceOptions<State, CR, Name> & {
   reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
   hydration: DrizzleHydrationQuery<Q, State>;
+  applyRows?: ApplyRowsConfig<State>;
 }): Slice<State, CR, Name, Name, SliceSelectors<State>>;
 // Overload: SQL hydration or no hydration
 export function createFireflySlice<
@@ -136,6 +138,7 @@ export function createFireflySlice<
 >(options: CreateFireflySliceOptions<State, CR, Name> & {
   reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
   hydration?: HydrationQuery;
+  applyRows?: ApplyRowsConfig<State>;
 }): Slice<State, CR, Name, Name, SliceSelectors<State>>;
 export function createFireflySlice<
   State,
@@ -144,8 +147,9 @@ export function createFireflySlice<
 >(options: CreateFireflySliceOptions<State, CR, Name> & {
   reducers: (fireflyReducer: FireflyReducerFactory<State>) => CR;
   hydration?: HydrationQuery | DrizzleHydrationQuery<any, State>;
+  applyRows?: ApplyRowsConfig<State>;
 }) {
-  const { name, reducers: reducersFactory, hydration, extraReducers: userExtraReducers, ...rest } = options;
+  const { name, reducers: reducersFactory, hydration, applyRows: applyRowsConfig, extraReducers: userExtraReducers, ...rest } = options;
 
   const reducers: CR = reducersFactory(createFireflyCaseReducer<State>());
 
@@ -227,6 +231,11 @@ export function createFireflySlice<
   // Attach hydration metadata to the reducer if provided
   if (hydration) {
     withHydration(slice.reducer, hydration);
+  }
+
+  // Attach row-level direct-apply config to the reducer if provided
+  if (applyRowsConfig) {
+    attachApplyRows(slice.reducer, applyRowsConfig);
   }
 
   return slice;

@@ -2,31 +2,20 @@ import type { Middleware } from 'redux';
 import type { FireflyConfig } from './types';
 import { isFireflyAction } from './types';
 import { executeOperation } from './executor';
+import { createSerializer } from './serializer';
 
 /**
- * Creates the Firefly middleware for Redux
- * @param config - Middleware configuration
- * @returns Redux middleware
- *
- * @example
- * const fireflyMiddleware = createFireflyMiddleware({
- *   database: db,
- *   onError: (error, action) => console.error('Firefly error:', error),
- *   debug: true
- * })
- *
- * const store = configureStore({
- *   reducer: rootReducer,
- *   middleware: (getDefaultMiddleware) =>
- *     getDefaultMiddleware().concat(fireflyMiddleware)
- * })
+ * Creates the effect-executing middleware: any dispatched Firefly action's DB
+ * effect runs against the database, then its commit/rollback action is
+ * dispatched. Use via `createFirefly`.
  */
 export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, any, any> {
-  const { database, onError, debug, serializeEffects = true } = config;
+  const { database, onError, debug } = config;
 
-  // Single-connection drivers (expo-sqlite, better-sqlite3) reject a second
-  // `BEGIN` while one is already open. Pooled drivers can opt out.
-  let queue: Promise<unknown> = Promise.resolve();
+  // With serializeEffects on (the default, required for single-connection
+  // drivers that reject nested BEGIN), effects are chained so only one runs at
+  // a time. With it off (pooled drivers), the serializer runs work immediately.
+  const serializer = createSerializer(config.serializeEffects ?? true);
 
   return (store) => (next) => (action) => {
     // Pass action through to reducer first (for optimistic updates)
@@ -109,13 +98,9 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
           }
         });
 
-    if (serializeEffects) {
-      // Same handler for fulfilled and rejected so one throwing effect
-      // can't poison the queue for subsequent dispatches.
-      queue = queue.then(run, run);
-    } else {
-      run();
-    }
+    // `run` never rejects (it catches internally); the serializer keeps the
+    // chain alive regardless.
+    void serializer.run(run);
 
     return result;
   };

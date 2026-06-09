@@ -139,8 +139,10 @@ Creates the Firefly middleware, reducer enhancer, and store enhancer.
 
 **Parameters:**
 - `database` (FireflyDriver | DrizzleDatabase): A database driver instance (e.g. `expoSQLiteDriver(db)`) or a Drizzle database instance (e.g. `drizzle(expoDb)`)
+- `changes?` (FireflyChangeSource): A FireflyDB `FireflyClient` (or anything with its `subscribeToChanges`). Merged rows from its change events are applied to the matching `applyRows` slices — see [FireflyDB live updates](#fireflydb-live-updates-merged-rows)
 - `onError?` (`(error: Error, action: FireflyAction) => void`): Optional error handler
 - `debug?` (boolean): Enable debug logging
+- `serializeEffects?` (boolean, default `true`): Run DB effects one at a time. Required for single-connection drivers; set `false` for pooled drivers
 
 **Returns:** `{ middleware, enhanceReducer, enhanceStore }`
 
@@ -154,6 +156,24 @@ import * as SQLite from 'expo-sqlite';
 
 const driver = expoSQLiteDriver(SQLite.openDatabaseSync('app.db'));
 ```
+
+### `fireflyClientDriver(client)`
+
+Adapts a FireflyDB `FireflyClient` to the `FireflyDriver` interface, so **raw-SQL** effects and hydration queries run on the client's CRDT-tracked connection — which is what makes the writes sync.
+
+```typescript
+import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: fireflyClientDriver(client),
+  changes: client, // live merged-row updates, same client
+});
+```
+
+Notes:
+- `runAsync` reports `{ lastInsertRowId: 0, changes: 0 }` — FireflyDB rows use app-generated ids (UUIDs / `firefly_uuid()`), so commit handlers must not rely on SQLite's last-insert-rowid.
+- The client is a single connection: keep `serializeEffects` on (the default) so transactions can't overlap.
+- **Drizzle effects bypass this driver** (a drizzle query carries its own db handle). To use drizzle with FireflyDB, build the drizzle instance over the client instead — see [Drizzle + FireflyDB](#drizzle--fireflydb).
 
 ### `FireflyDriver` Interface
 
@@ -179,6 +199,48 @@ Attaches hydration configuration to a reducer so it can be auto-discovered by `e
 
 Use this when you're not using `createFireflySlice` (which handles hydration automatically via its `hydration` option).
 
+### `applyRows(reducer, config)`
+
+Attaches a row-level apply config to a reducer so `enhanceReducer` can apply FireflyDB merged rows into the slice — no SQL read. The live-update mirror of `withHydration`; the two compose (hydration for the initial load, applyRows for changes after that).
+
+**Parameters:**
+- `reducer` (Reducer): A Redux reducer
+- `config` (ApplyRowsConfig): `{ table, apply }`
+  - `table` (string): The table whose merged rows drive this slice (matched case-insensitively)
+  - `apply` (`(state, { upserts, deletes }) => state`): Pure reducer over merged rows — `upserts` are live rows to insert/update, `deletes` are tombstones to remove
+
+**Returns:** The same reducer with the apply config attached
+
+Requires `changes` to be set on `createFirefly`. Use the `applyRows` option of `createFireflySlice` instead when using the toolkit entry.
+
+### `listApply(options)`
+
+Builds an `apply` function for the common "slice holds a list of items" shape, so you don't hand-write the merge logic. Upserts replace the existing item with the same id in place (or append new items at the end); deletes remove items by id; if an id is both upserted and deleted in one batch, the upsert wins. Returns a new state object only when something changed, otherwise the original reference (no spurious re-renders).
+
+**Parameters:**
+- `toItem` (`(row: MergedRow) => Item`): Map a merged row to the item shape stored in state — decoded column values are in `row.columns`
+- `getId` (`(item: Item) => string | number`): Stable id of an item already in state, used to match rows to items
+- `rowId?` (`(row: MergedRow) => string | number`): Id derived from a merged row; defaults to the decoded primary key (`row.key`). Override when items are keyed by something other than the PK — must agree with `getId(toItem(row))`
+- `listKey?` (string): The state property holding the array (e.g. `'items'`). Omit when the slice state **is** the array
+
+**Returns:** An `apply` function to pass to `applyRows` (or the `applyRows` option of `createFireflySlice`)
+
+```typescript
+import { applyRows, listApply } from 'redux-firefly';
+
+// State shape: { items: Todo[] }
+const todosReducer = applyRows(todosSlice.reducer, {
+  table: 'todos',
+  apply: listApply<Todo>({
+    toItem: (row) => ({ id: String(row.key), text: String(row.columns.text) }),
+    getId: (todo) => todo.id,
+    listKey: 'items',
+  }),
+});
+```
+
+For non-list state shapes (maps keyed by id, nested objects, aggregates), write the `apply` reducer by hand instead.
+
 ### `createFireflySlice(options)` (Toolkit)
 
 Creates a Redux Toolkit slice with colocated Firefly effect, commit, and rollback handlers plus optional hydration. Import from `redux-firefly/toolkit`.
@@ -188,6 +250,7 @@ Creates a Redux Toolkit slice with colocated Firefly effect, commit, and rollbac
 - `initialState` (State | () => State): Initial state
 - `reducers` (`(fireflyReducer) => CaseReducers`): A callback that receives the `fireflyReducer` helper and returns case reducer definitions
 - `hydration?` (HydrationQuery | DrizzleHydrationQuery): Hydration query config (equivalent to wrapping with `withHydration`). For Drizzle queries, `transform` receives fully typed rows inferred from the query. Supports a single query or an array of queries (see [Drizzle Hydration](#drizzle-hydration)).
+- `applyRows?` (ApplyRowsConfig): Row-level apply config `{ table, apply }` (equivalent to wrapping with `applyRows`) — applies FireflyDB merged rows into the slice on change events (see [`listApply`](#listapplyoptions))
 - `extraReducers?` (function): Standard RTK `extraReducers` builder callback
 
 Each case reducer defined via `fireflyReducer(...)` takes:
@@ -630,7 +693,198 @@ The enhanced store exposes these hydration helpers:
 store.hydrated              // Promise<void> — resolves when hydration completes
 store.isHydrated()          // boolean — synchronous check
 store.onHydrationChange(cb) // subscribe to hydration status changes; returns unsubscribe fn
+store.refreshAll()          // re-run hydration for every slice (manual escape hatch)
+store.dispose()             // tear down the change subscription
 ```
+
+## FireflyDB live updates (merged rows)
+
+Redux-Firefly persists to a local SQLite database. When that database is a
+[FireflyDB](https://github.com/fireflydb/fireflydb) CRDT connection, every remote
+change event carries the **merged rows** — the post-merge value of every changed
+column. Redux-Firefly applies those rows straight into your slices: **no SQL
+read, no re-hydration**. Hydration runs once at launch; after that, live updates
+flow exclusively through the change callback.
+
+Pass the `FireflyClient` as `changes` and bind each slice to its table with
+`applyRows`:
+
+```typescript
+import { createFirefly, withHydration, applyRows, listApply } from 'redux-firefly';
+
+const todosReducer = applyRows(
+  withHydration(todosSlice.reducer, { query: 'SELECT * FROM todos', /* … */ }),
+  {
+    table: 'todos',
+    apply: listApply<Todo>({
+      toItem: (row) => ({ id: String(row.key), text: String(row.columns.text) }),
+      getId: (todo) => todo.id,
+      listKey: 'items', // omit when the slice state *is* the array
+    }),
+  },
+);
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: db, // drizzle over the FireflyClient connection
+  changes: client,
+});
+```
+
+`apply` is a plain reducer over rows: `(state, { upserts, deletes }) => nextState`.
+`listApply` is a convenience builder for the common "slice holds a list of items"
+shape: it **upserts** each row by id (replace existing / append new) and
+**removes** deleted rows by id. `rowId` defaults to the decoded `row.key`; for
+non-list shapes write your own `apply`.
+
+With `createFireflySlice`, pass `applyRows` as an option instead of wrapping:
+
+```typescript
+const todosSlice = createFireflySlice({
+  name: 'todos',
+  initialState: { items: [] as Todo[] },
+  reducers: (firefly) => ({ /* … */ }),
+  hydration: { query: 'SELECT * FROM todos', transform: (rows) => ({ items: rows }) },
+  applyRows: {
+    table: 'todos',
+    apply: listApply<Todo>({
+      toItem: (row) => ({ id: String(row.key), text: String(row.columns.text) }),
+      getId: (todo) => todo.id,
+      listKey: 'items',
+    }),
+  },
+});
+```
+
+Notes:
+
+- Merged rows are bucketed by table and applied to the matching `applyRows`
+  slices in one synchronous `@@firefly/APPLY_ROWS` dispatch. Tables without an
+  `applyRows` slice are ignored.
+- Rows arriving **during** the initial hydration are buffered and applied right
+  after it, so nothing is missed (applies are idempotent — upserts replace by
+  id).
+- Local writes are already reflected by the optimistic reducer + commit; only
+  remote change events carry merged rows.
+- Anything that bypasses the change listener (e.g. an explicit `client.sync()`
+  pull) can be reconciled manually with `store.refreshAll()`.
+
+### Running effects on the FireflyDB connection
+
+Every write must run on the client's **CRDT-tracked connection** — a write that
+goes around it never syncs. For **raw-SQL** effects, wrap the client with
+[`fireflyClientDriver`](#fireflyclientdriverclient):
+
+```typescript
+import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: fireflyClientDriver(client),
+  changes: client,
+});
+```
+
+For drizzle effects, see the next section — they bypass the driver.
+
+### Drizzle + FireflyDB
+
+A drizzle effect is awaited directly and carries its own db handle, so it
+bypasses whatever `database` driver you configured. To run drizzle on the
+tracked connection, build the drizzle instance **over the client itself** with
+drizzle's `sqlite-proxy` driver, forwarding to `client.exec` / `client.query`:
+
+```typescript
+// db.ts
+import { drizzle } from 'drizzle-orm/sqlite-proxy';
+import type { FireflyClient } from '@fireflydb/expo'; // or @fireflydb/op-sqlite
+import * as schema from './schema';
+
+export function makeDb(client: FireflyClient) {
+  return drizzle(
+    async (sql, params, method) => {
+      if (method === 'run') {
+        await client.exec(sql, params);
+        return { rows: [] };
+      }
+      // drizzle expects each row as an array of values in SELECT column order.
+      // drizzle always generates explicit column lists, so object key order matches.
+      const rows = await client.query<Record<string, unknown>>(sql, params);
+      const values = rows.map((row) => Object.values(row));
+      return method === 'get' ? { rows: values[0] ?? [] } : { rows: values };
+    },
+    { schema },
+  );
+}
+```
+
+Wire it all up — the proxy db as `database` (drizzle effects + hydration run
+tracked), the client as `changes` (remote merged rows flow into `applyRows`
+slices):
+
+```typescript
+import { createFireflyClient } from '@fireflydb/expo';
+import { createFirefly } from 'redux-firefly';
+import { makeDb } from './db';
+
+const client = createFireflyClient({ /* relayUrl, databaseID, token, … */ });
+await client.init();
+await client.open();
+
+const db = makeDb(client);
+
+const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  database: db,
+  changes: client,
+});
+```
+
+A slice then combines all three Firefly features — drizzle hydration for the
+initial load, a drizzle effect for writes, and `applyRows` for live updates:
+
+```typescript
+import { createFireflySlice, listApply } from 'redux-firefly/toolkit';
+import { fireflyHydration } from 'redux-firefly';
+import { todos } from './schema';
+
+const todosSlice = createFireflySlice({
+  name: 'todos',
+  initialState: { items: [] as Todo[] },
+  // Lazy query factory: `db` is created after the async client init,
+  // so don't build the query at module load.
+  hydration: fireflyHydration(
+    () => db.select().from(todos),
+    (rows) => ({ items: rows }),
+  ),
+  applyRows: {
+    table: 'todos',
+    apply: listApply<Todo>({
+      toItem: (row) => ({ id: String(row.key), text: String(row.columns.text) }),
+      getId: (todo) => todo.id,
+      listKey: 'items',
+    }),
+  },
+  reducers: (firefly) => ({
+    addTodo: firefly({
+      reducer: (state, action) => { state.items.push(action.payload); },
+      prepare: (text: string) => ({ payload: { id: Crypto.randomUUID(), text } }),
+      effect: (todo) => db.insert(todos).values(todo),
+    }),
+  }),
+});
+```
+
+Notes:
+
+- **Generate row ids in the app** (UUIDs / `firefly_uuid()`). CRDT rows need ids
+  that are stable across devices — never rely on `AUTOINCREMENT` or
+  last-insert-rowid.
+- **Transactions work through the proxy**: drizzle's `db.transaction` (and array
+  effects) forward `BEGIN`/`COMMIT`/`ROLLBACK` through `client.exec`. The client
+  is a single connection, so keep `serializeEffects` on (the default) to prevent
+  overlapping transactions.
+- The full loop: dispatch → optimistic reducer → drizzle effect writes through
+  the client (tracked, syncs to the relay) → commit action. Other devices
+  receive the change as merged rows → their `applyRows` slices update — and
+  yours do the same for their writes.
 
 ## License
 
