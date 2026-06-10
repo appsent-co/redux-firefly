@@ -11,7 +11,7 @@ Redux middleware for persisting state to SQLite in React Native. Redux-Firefly p
 - **React Integration**: FireflyGate component delays rendering until hydration completes
 - **TypeScript**: Full type safety with comprehensive TypeScript definitions
 - **Redux Toolkit Integration**: `createFireflySlice` for colocated effect, commit, and rollback handlers
-- **Drizzle ORM Support**: Use Drizzle query builders as effects — pass your drizzle database directly to `createFirefly`
+- **Drizzle ORM Support**: Use Drizzle query builders as effects — pass your drizzle database directly to `createReduxFirefly`
 - **Driver Abstraction**: Bring your own SQLite client via the `FireflyDriver` interface
 - **Custom Schema**: You control the database schema completely
 
@@ -38,12 +38,12 @@ npm install drizzle-orm
 ### 1. Create the Firefly instance
 
 ```typescript
-import { createFirefly, expoSQLiteDriver } from 'redux-firefly';
+import { createReduxFirefly, expoSQLiteDriver } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 
 const db = SQLite.openDatabaseSync('app.db');
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: expoSQLiteDriver(db),
   onError: (error, action) => console.error('[Firefly]', error.message, action.type),
   debug: __DEV__,
@@ -53,14 +53,14 @@ const { middleware, enhanceReducer, enhanceStore } = createFirefly({
 **With Drizzle ORM** — pass your drizzle instance directly, no driver wrapper needed:
 
 ```typescript
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 
 const expoDb = SQLite.openDatabaseSync('app.db');
 const db = drizzle(expoDb);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db,
   debug: __DEV__,
 });
@@ -133,7 +133,7 @@ export default todosSlice.reducer;
 
 ## API Reference
 
-### `createFirefly(config)`
+### `createReduxFirefly(config)`
 
 Creates the Firefly middleware, reducer enhancer, and store enhancer.
 
@@ -162,9 +162,9 @@ const driver = expoSQLiteDriver(SQLite.openDatabaseSync('app.db'));
 Adapts a FireflyDB `FireflyClient` to the `FireflyDriver` interface, so **raw-SQL** effects and hydration queries run on the client's CRDT-tracked connection — which is what makes the writes sync.
 
 ```typescript
-import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+import { createReduxFirefly, fireflyClientDriver } from 'redux-firefly';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: fireflyClientDriver(client),
   changes: client, // live merged-row updates, same client
 });
@@ -211,7 +211,7 @@ Attaches a row-level apply config to a reducer so `enhanceReducer` can apply Fir
 
 **Returns:** The same reducer with the apply config attached
 
-Requires `changes` to be set on `createFirefly`. Use the `applyRows` option of `createFireflySlice` instead when using the toolkit entry.
+Requires `changes` to be set on `createReduxFirefly`. Use the `applyRows` option of `createFireflySlice` instead when using the toolkit entry.
 
 ### `listApply(options)`
 
@@ -415,17 +415,17 @@ Redux-Firefly has first-class support for [Drizzle ORM](https://orm.drizzle.team
 
 ### Setup
 
-Pass your Drizzle database instance directly to `createFirefly`:
+Pass your Drizzle database instance directly to `createReduxFirefly`:
 
 ```typescript
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 
 const expoDb = SQLite.openDatabaseSync('app.db');
 const db = drizzle(expoDb);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // no driver wrapper needed
 });
 ```
@@ -710,7 +710,7 @@ Pass the `FireflyClient` as `changes` and bind each slice to its table with
 `applyRows`:
 
 ```typescript
-import { createFirefly, withHydration, applyRows, listApply } from 'redux-firefly';
+import { createReduxFirefly, withHydration, applyRows, listApply } from 'redux-firefly';
 
 const todosReducer = applyRows(
   withHydration(todosSlice.reducer, { query: 'SELECT * FROM todos', /* … */ }),
@@ -724,7 +724,7 @@ const todosReducer = applyRows(
   },
 );
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // drizzle over the FireflyClient connection
   changes: client,
 });
@@ -775,9 +775,9 @@ goes around it never syncs. For **raw-SQL** effects, wrap the client with
 [`fireflyClientDriver`](#fireflyclientdriverclient):
 
 ```typescript
-import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+import { createReduxFirefly, fireflyClientDriver } from 'redux-firefly';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: fireflyClientDriver(client),
   changes: client,
 });
@@ -822,7 +822,7 @@ slices):
 
 ```typescript
 import { createFireflyClient } from '@fireflydb/expo';
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import { makeDb } from './db';
 
 const client = createFireflyClient({ /* relayUrl, databaseID, token, … */ });
@@ -831,7 +831,7 @@ await client.open();
 
 const db = makeDb(client);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db,
   changes: client,
 });

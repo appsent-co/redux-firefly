@@ -7,7 +7,7 @@ import { createSerializer } from './serializer';
 /**
  * Creates the effect-executing middleware: any dispatched Firefly action's DB
  * effect runs against the database, then its commit/rollback action is
- * dispatched. Use via `createFirefly`.
+ * dispatched. Use via `createReduxFirefly`.
  */
 export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, any, any> {
   const { database, onError, debug } = config;

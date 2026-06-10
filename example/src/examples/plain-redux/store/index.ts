@@ -1,13 +1,13 @@
 import { createStore, applyMiddleware, compose } from 'redux';
 import type { StoreEnhancer } from 'redux';
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import { driver, initDatabase } from '../database';
 import todosReducer from './todosReducer';
 import type { Todo } from '../../../types';
 
 initDatabase();
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: driver,
   debug: __DEV__,
 });

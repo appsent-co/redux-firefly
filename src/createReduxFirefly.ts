@@ -28,7 +28,7 @@ const APPLY_ROWS_ACTION = '@@firefly/APPLY_ROWS';
  *   SQL read, no re-hydration.
  *
  * @example
- * const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+ * const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
  *   database: db,
  *   changes: client,
  * });
@@ -48,7 +48,7 @@ const APPLY_ROWS_ACTION = '@@firefly/APPLY_ROWS';
  *
  * await store.hydrated;
  */
-export function createFirefly(config: FireflyConfig): {
+export function createReduxFirefly(config: FireflyConfig): {
   middleware: Middleware;
   enhanceReducer: <S extends Record<string, any>>(reducerMap: { [K in keyof S]: Reducer<S[K]> }) => Reducer<S>;
   enhanceStore: StoreEnhancer<FireflyStore>;

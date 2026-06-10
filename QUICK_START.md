@@ -111,11 +111,11 @@ export default todosSlice.reducer;
 `src/store.ts`:
 ```typescript
 import { configureStore } from '@reduxjs/toolkit';
-import { createFirefly, expoSQLiteDriver } from 'redux-firefly';
+import { createReduxFirefly, expoSQLiteDriver } from 'redux-firefly';
 import { db } from './db';
 import todosReducer from './todosSlice';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: expoSQLiteDriver(db),
   debug: __DEV__,
 });
@@ -284,11 +284,11 @@ export default todosSlice.reducer;
 `src/store.ts`:
 ```typescript
 import { configureStore } from '@reduxjs/toolkit';
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import { db } from './db';
 import todosReducer from './todosSlice';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // pass drizzle instance directly — no driver wrapper needed
   debug: __DEV__,
 });

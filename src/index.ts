@@ -1,5 +1,5 @@
 // Main API
-export { createFirefly } from './createFirefly';
+export { createReduxFirefly } from './createReduxFirefly';
 export { withHydration, isHydratedReducer, applyRows, isApplyRowsReducer } from './withHydration';
 export type { HydratedReducer } from './withHydration';
 export { fireflyHydration } from './drizzle/hydrate';

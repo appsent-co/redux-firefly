@@ -1,5 +1,5 @@
 import { configureStore, type Store } from '@reduxjs/toolkit';
-import { createFirefly } from '../src/createFirefly';
+import { createReduxFirefly } from '../src/createReduxFirefly';
 import { withHydration, applyRows as attachApplyRows } from '../src/withHydration';
 import { listApply } from '../src/apply-rows';
 import type {
@@ -121,7 +121,7 @@ describe('listApply', () => {
 });
 
 // ---------------------------------------------------------------------------
-// End-to-end: FireflyClient change events through createFirefly + configureStore
+// End-to-end: FireflyClient change events through createReduxFirefly + configureStore
 // ---------------------------------------------------------------------------
 
 function fakeDriver() {
@@ -182,7 +182,7 @@ function setup() {
     },
   );
 
-  const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+  const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
     database: driver,
     changes: client,
   });
