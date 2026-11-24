@@ -1,13 +1,41 @@
-
-export { createFireflySlice } from './createFireflySlice';
+export { createFireflySlice, onCommit, onRollback } from './createFireflySlice';
 export type {
+  // Slice and matchers
+  FireflySlice,
+  FireflyActions,
+  CommitMatcher,
+  RollbackMatcher,
+
+  // Reducer definitions (for wrappers of createFireflySlice)
+  CreateFireflySliceOptions,
+  FireflySliceHydration,
+  FireflyReducerFactory,
+  FireflyCaseReducer,
+  FireflyCaseReducerDef,
   FireflyCaseReducerWithPrepareDef,
+  FireflyCommitHandlerAction,
+  FireflyRollbackHandlerAction,
+  FireflyIdentityPrepareArgs,
+
+  // The compile-time check on a definition's effect, and what its errors name
+  FireflyEffectCheck,
+  FireflyInvalidEffectSlot,
+  FireflyEffectIsAPromise,
 } from './createFireflySlice';
 export type {
   FireflyCommitAction,
   FireflyRollbackAction,
+  FireflyCommitted,
+  FireflyRolledBack,
+  FireflyEffect,
+  FireflyEffectRecord,
+  FireflyEffectSlot,
+  FireflyRecordResults,
+  FireflySlotResult,
+  InferEffectResult,
 } from './types';
 export type { OperationResult, HydrationQuery } from '../types';
+export type { DrizzleQuery, DrizzleHydrationQuery } from '../drizzle/types';
 
 // Row-level apply (mirrors the main entry for toolkit consumers).
 export { applyRows } from '../withHydration';

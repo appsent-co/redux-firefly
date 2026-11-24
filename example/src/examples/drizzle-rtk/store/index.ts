@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import { db, initDatabase } from '../database/schema';
 import todosReducer from './slices/todosSlice';
 import categoriesReducer from './slices/categoriesSlice';
@@ -9,7 +9,7 @@ import type { Todo, Category, Tag } from '../../../types';
 // Initialize database schema
 initDatabase();
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // drizzle instance — no driver wrapper needed
   onError: (error, action) => {
     console.error('[Firefly Error]', {

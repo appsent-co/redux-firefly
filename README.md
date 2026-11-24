@@ -7,13 +7,17 @@ Redux middleware for persisting state to SQLite in React Native. Redux-Firefly p
 - **Simple API**: Annotate actions with `meta.firefly` to persist to SQLite
 - **Optimistic Updates**: Optional commit/rollback pattern for better UX
 - **Transaction Support**: Execute multiple database operations atomically
+- **Record Effects**: Name the statements of a write — they run in one transaction and the commit hands back each result under its name, typed per slot
+- **Commit/Rollback Matchers**: Every toolkit action creator carries `.commit` and `.rollback` matchers, plus `onCommit` / `onRollback` for cross-slice reactions
 - **Hydration**: Load initial state from SQLite on app startup
 - **React Integration**: FireflyGate component delays rendering until hydration completes
 - **TypeScript**: Full type safety with comprehensive TypeScript definitions
 - **Redux Toolkit Integration**: `createFireflySlice` for colocated effect, commit, and rollback handlers
-- **Drizzle ORM Support**: Use Drizzle query builders as effects — pass your drizzle database directly to `createFirefly`
+- **Drizzle ORM Support**: Use Drizzle query builders as effects — pass your drizzle database directly to `createReduxFirefly`
 - **Driver Abstraction**: Bring your own SQLite client via the `FireflyDriver` interface
 - **Custom Schema**: You control the database schema completely
+
+> **Upgrading from 1.x?** 2.0 changes four behaviours. See [Migrating from 1.x](CHANGELOG.md#migrating-from-1x) in the changelog.
 
 ## Installation
 
@@ -38,12 +42,12 @@ npm install drizzle-orm
 ### 1. Create the Firefly instance
 
 ```typescript
-import { createFirefly, expoSQLiteDriver } from 'redux-firefly';
+import { createReduxFirefly, expoSQLiteDriver } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 
 const db = SQLite.openDatabaseSync('app.db');
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: expoSQLiteDriver(db),
   onError: (error, action) => console.error('[Firefly]', error.message, action.type),
   debug: __DEV__,
@@ -53,14 +57,14 @@ const { middleware, enhanceReducer, enhanceStore } = createFirefly({
 **With Drizzle ORM** — pass your drizzle instance directly, no driver wrapper needed:
 
 ```typescript
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 
 const expoDb = SQLite.openDatabaseSync('app.db');
 const db = drizzle(expoDb);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db,
   debug: __DEV__,
 });
@@ -133,16 +137,17 @@ export default todosSlice.reducer;
 
 ## API Reference
 
-### `createFirefly(config)`
+### `createReduxFirefly(config)`
 
 Creates the Firefly middleware, reducer enhancer, and store enhancer.
 
 **Parameters:**
 - `database` (FireflyDriver | DrizzleDatabase): A database driver instance (e.g. `expoSQLiteDriver(db)`) or a Drizzle database instance (e.g. `drizzle(expoDb)`)
 - `changes?` (FireflyChangeSource): A FireflyDB `FireflyClient` (or anything with its `subscribeToChanges`). Merged rows from its change events are applied to the matching `applyRows` slices — see [FireflyDB live updates](#fireflydb-live-updates-merged-rows)
-- `onError?` (`(error: Error, action: FireflyAction) => void`): Optional error handler
+- `onError?` (`(error: Error, action: FireflyAction) => void`): Optional error handler, called when a write fails. `action` is the action you dispatched, including any `meta` its `prepare` added (see [Passing `meta` Through `prepare`](#passing-meta-through-prepare))
 - `debug?` (boolean): Enable debug logging
-- `serializeEffects?` (boolean, default `true`): Run DB effects one at a time. Required for single-connection drivers; set `false` for pooled drivers
+- `serializeEffects?` (boolean, default `true`): Run DB effects one at a time. Required for single-connection drivers; set `false` for pooled drivers, together with `transactionalSingleStatements: false`
+- `transactionalSingleStatements?` (boolean, default `true`): Run a bare single drizzle query through `database.transaction`, like an array or a record, so it waits behind a transaction already open on the same database instead of running inside it. Set `false` to await the query directly as 1.x did; a database whose `transaction()` is synchronous and refuses an async callback (Drizzle's `better-sqlite3`) gets the direct await either way. **Set it to `false` for a pooled driver**: there the transaction and the query each take a connection, and concurrent writes can exhaust the pool and hang (see [Single Statements](#single-statements))
 
 **Returns:** `{ middleware, enhanceReducer, enhanceStore }`
 
@@ -162,9 +167,9 @@ const driver = expoSQLiteDriver(SQLite.openDatabaseSync('app.db'));
 Adapts a FireflyDB `FireflyClient` to the `FireflyDriver` interface, so **raw-SQL** effects and hydration queries run on the client's CRDT-tracked connection — which is what makes the writes sync.
 
 ```typescript
-import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+import { createReduxFirefly, fireflyClientDriver } from 'redux-firefly';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: fireflyClientDriver(client),
   changes: client, // live merged-row updates, same client
 });
@@ -211,7 +216,7 @@ Attaches a row-level apply config to a reducer so `enhanceReducer` can apply Fir
 
 **Returns:** The same reducer with the apply config attached
 
-Requires `changes` to be set on `createFirefly`. Use the `applyRows` option of `createFireflySlice` instead when using the toolkit entry.
+Requires `changes` to be set on `createReduxFirefly`. Use the `applyRows` option of `createFireflySlice` instead when using the toolkit entry.
 
 ### `listApply(options)`
 
@@ -253,14 +258,18 @@ Creates a Redux Toolkit slice with colocated Firefly effect, commit, and rollbac
 - `applyRows?` (ApplyRowsConfig): Row-level apply config `{ table, apply }` (equivalent to wrapping with `applyRows`) — applies FireflyDB merged rows into the slice on change events (see [`listApply`](#listapplyoptions))
 - `extraReducers?` (function): Standard RTK `extraReducers` builder callback
 
-Each case reducer defined via `fireflyReducer(...)` takes:
-- `reducer`: The Redux case reducer (called optimistically)
-- `effect`: The database operation — a static effect object, array (transaction), or function `(payload) => effect`
-- `prepare?`: Optional prepare callback for the action creator
-- `commit?`: Called on database success — receives `action.payload` (the original payload) and `action.meta.firefly.result`
-- `rollback?`: Called on database failure — receives `action.payload` and `action.meta.firefly.error`
+**Returns:** An RTK slice. Each action creator built with `fireflyReducer(...)` also carries `.commit` and `.rollback` matchers (see [Commit and Rollback Matchers](#commit-and-rollback-matchers)).
 
-Commit/rollback handlers are dispatched automatically by the middleware using auto-generated action types: `{name}/{reducerKey}/commit` and `{name}/{reducerKey}/rollback`.
+Each case reducer defined via `fireflyReducer(...)` takes:
+- `effect`: The database operation — a single effect, an array of effects (transaction, positional results), or a record of named slots (transaction, results by name — see [Record Effects](#record-effects)). Pass it as a static value or as a function `(payload) => effect`
+- `reducer?`: The Redux case reducer (called optimistically, before the database work). Omit it for a [commit-only write](#commit-only-writes)
+- `prepare?`: Optional prepare callback for the action creator. Any `meta` it returns stays on the dispatched action (see [Passing `meta` Through `prepare`](#passing-meta-through-prepare))
+- `commit?`: Called on database success — receives the commit action plus `results`: `(state, { payload, results })`. `payload` is the original payload, `results` is what the effect returned (also at `action.meta.firefly.result`)
+- `rollback?`: Called on database failure — receives the rollback action plus `error`: `(state, { payload, error })`. `error` is always an `Error` (also at `action.meta.firefly.error`)
+
+Write `effect` before `commit` in the definition: TypeScript types the commit's `results` from the effect, and it reads the properties in order. With `commit` first, `results` is `any`.
+
+After every write that ran, the middleware dispatches a commit or a rollback action — whether or not the reducer defines a handler for it — using auto-generated action types: `{name}/{reducerKey}/commit` and `{name}/{reducerKey}/rollback`. You never have to spell those strings out: use the action creator's `.commit` and `.rollback` matchers. The one exception is an [empty write](#empty-writes), which dispatches neither.
 
 **Example:**
 ```typescript
@@ -286,7 +295,7 @@ const todosSlice = createFireflySlice({
     // Simple reducer (no database effect)
     clearAll: () => [],
 
-    // Fire-and-forget INSERT (no commit/rollback)
+    // Fire-and-forget INSERT (no commit/rollback handlers)
     addTodoSimple: fireflyReducer({
       reducer: (state, action) => {
         state.push({ id: Date.now(), text: action.payload.text, completed: false });
@@ -374,11 +383,242 @@ const store = configureStore({
 
 #### Typed Commit/Rollback Actions
 
-Import `FireflyCommitAction` and `FireflyRollbackAction` from `redux-firefly/toolkit` for type-safe handlers:
+A `commit` or `rollback` handler receives the dispatched action with one field added, so you can destructure what you need or keep reading the action:
 
-- **Commit** actions include `action.meta.firefly.result` (`OperationResult`) with `insertId`, `rowsAffected`, `rows`, etc.
-- **Rollback** actions include `action.meta.firefly.error` (`Error`)
-- Both receive `action.payload` — the original action payload, forwarded automatically.
+```typescript
+// Destructured
+commit: (state, { payload, results }) => { /* ... */ },
+rollback: (state, { payload, error }) => { /* ... */ },
+
+// The same values, read off the action
+commit: (state, action) => { /* action.payload, action.meta.firefly.result */ },
+rollback: (state, action) => { /* action.payload, action.meta.firefly.error */ },
+```
+
+- **Commit** handlers get `results` — the same value as `action.meta.firefly.result`. Its type is inferred from the effect.
+- **Rollback** handlers get `error` — the same value as `action.meta.firefly.error`, always an `Error`. The database is unchanged.
+- Both get `payload` — the original action payload, forwarded automatically.
+
+What `results` holds depends on the form of the effect:
+
+| Effect | `results` |
+| --- | --- |
+| Single SQL effect | `{ lastInsertRowId, changes }` for a mutation, the rows array for a `SELECT` |
+| Single Drizzle query | Whatever the query resolves to (rows for `select()` / `.returning()`, the driver's run result otherwise) |
+| Array of effects | One `{ success, rows }` per statement, in array order |
+| Record of named slots | An object with each slot's result under its name (see [Record Effects](#record-effects)) |
+
+The dispatched actions are typed `FireflyCommitAction<Payload, Results>` and `FireflyRollbackAction<Payload>`; what a handler destructures is `FireflyCommitted<Payload, Results>` (`{ payload, results }`) and `FireflyRolledBack<Payload>` (`{ payload, error }`). All four are exported from `redux-firefly/toolkit`.
+
+#### Commit and Rollback Matchers
+
+For every reducer built with `fireflyReducer(...)`, the action creator carries two matchers, `.commit` and `.rollback`. They describe the actions the middleware dispatches when the write settles; they are not action creators, and you never dispatch them yourself.
+
+```typescript
+const { addTodo } = todosSlice.actions;
+
+addTodo.commit.type;           // 'todos/addTodo/commit'
+addTodo.commit.match(action);  // is this addTodo's commit?
+addTodo.commit.unpack(action); // { payload, results }
+
+addTodo.rollback.type;           // 'todos/addTodo/rollback'
+addTodo.rollback.match(action);  // is this addTodo's rollback?
+addTodo.rollback.unpack(action); // { payload, error } — error is always an Error
+```
+
+- `type` (string): The action type
+- `match(action)`: Type guard — narrows `action` to the commit (or rollback) action. It works wherever Redux Toolkit takes a matcher, like the `match` of an RTK action creator
+- `unpack(action)`: Returns `{ payload, results }` for a commit and `{ payload, error }` for a rollback, typed from the reducer's `prepare` and `effect`
+
+Both actions are dispatched for every write that ran, including reducers that define no `commit` or `rollback` handler, so anything can react to a write settling. In listener middleware:
+
+```typescript
+import { createListenerMiddleware } from '@reduxjs/toolkit';
+import { addTodo } from './todosSlice';
+
+const listener = createListenerMiddleware();
+
+listener.startListening({
+  matcher: addTodo.commit.match,
+  effect: (action) => {
+    const { payload, results } = addTodo.commit.unpack(action);
+    console.log('Todo saved', payload.id, results);
+  },
+});
+
+listener.startListening({
+  matcher: addTodo.rollback.match,
+  effect: (action) => {
+    const { payload, error } = addTodo.rollback.unpack(action);
+    console.warn('Could not save todo', payload.id, error.message);
+  },
+});
+```
+
+The same guards fit `predicate: (action) => addTodo.commit.match(action)`, `builder.addMatcher(addTodo.commit.match, ...)` and `isAnyOf(addTodo.commit, deleteTodo.commit)`.
+
+Plain reducers (the ones not built with `fireflyReducer`) have no `.commit` or `.rollback`.
+
+#### `onCommit` and `onRollback`
+
+To update one slice when another slice's write lands (or fails), use `onCommit` and `onRollback` in `extraReducers`. They take the builder, the action creator, and a handler that receives the unpacked action:
+
+```typescript
+import { createSlice } from '@reduxjs/toolkit';
+import { onCommit, onRollback } from 'redux-firefly/toolkit';
+import { addTodo, deleteTodo } from './todosSlice';
+
+const statsSlice = createSlice({
+  name: 'stats',
+  initialState: { count: 0, lastSavedText: '', lastError: null as string | null },
+  reducers: {},
+  extraReducers: (builder) => {
+    onCommit(builder, addTodo, (state, { payload }) => {
+      state.count += 1;
+      state.lastSavedText = payload.text;
+    });
+    onCommit(builder, deleteTodo, (state) => {
+      state.count -= 1;
+    });
+    onRollback(builder, addTodo, (state, { error }) => {
+      state.lastError = error.message;
+    });
+  },
+});
+```
+
+- `onCommit(builder, creator, handler)`: `handler` is `(state, { payload, results }) => ...`
+- `onRollback(builder, creator, handler)`: `handler` is `(state, { payload, error }) => ...`
+
+Both work in any `extraReducers` — a plain `createSlice` or a `createFireflySlice`. They register a case with `builder.addCase`, so call them before any `builder.addMatcher` / `builder.addDefaultCase`, as RTK requires.
+
+#### Commit-only Writes
+
+`reducer` is optional. Leave it out when the state should change only once the write has landed — nothing is applied optimistically, so there is nothing to roll back:
+
+```typescript
+renameTodo: fireflyReducer({
+  prepare: (id: number, text: string) => ({ payload: { id, text } }),
+  // No `reducer`: the dispatched action changes nothing by itself.
+  effect: (payload) => ({
+    sql: 'UPDATE todos SET text = ? WHERE id = ?',
+    params: [payload.text, payload.id],
+  }),
+  commit: (state, { payload }) => {
+    const todo = state.find(t => t.id === payload.id);
+    if (todo) todo.text = payload.text;
+  },
+}),
+```
+
+Without a `prepare` either, the action creator takes the payload itself; annotate it on the effect's parameter (`effect: (payload: { id: number; text: string }) => ...`) to type it.
+
+#### Passing `meta` Through `prepare`
+
+Whatever `meta` your `prepare` returns stays on the dispatched action, next to `meta.firefly`. Reducers and middleware see it, and so does `onError(error, action)`, which receives that same action. That makes `meta` the place for per-write data your error handler needs — for example the message to show when the write fails:
+
+```typescript
+// todosSlice.ts
+deleteTodo: fireflyReducer({
+  prepare: (id: number) => ({
+    payload: { id },
+    meta: {
+      failure: { title: 'Could not delete', message: 'The todo is still there. Please try again.' },
+    },
+  }),
+  effect: (payload) => ({ sql: 'DELETE FROM todos WHERE id = ?', params: [payload.id] }),
+  commit: (state, { payload }) => state.filter(t => t.id !== payload.id),
+}),
+```
+
+```typescript
+// store.ts
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
+  database: expoSQLiteDriver(db),
+  onError: (error, action) => {
+    console.error('[Firefly]', error.message, action.type);
+    const failure = action.meta.failure;
+    if (failure) Alert.alert(failure.title, failure.message);
+  },
+});
+```
+
+`meta.firefly` is reserved for Redux-Firefly; every other key is yours. The commit and rollback actions do not carry your `meta` — they have `payload` and `meta.firefly.result` / `meta.firefly.error` only — so put anything a commit or rollback handler needs in the payload.
+
+#### Wrapping `createFireflySlice`
+
+Because `reducers` is a callback that receives `fireflyReducer`, an app can put its own conventions in a thin wrapper around `createFireflySlice`: wrap that helper, and add to what every reducer's `prepare` returns. Here each reducer may declare `failure` copy, which the wrapper puts on the action as `meta.failure` for `onError` to read:
+
+```typescript
+import type { SliceCaseReducers } from '@reduxjs/toolkit';
+import { createFireflySlice } from 'redux-firefly/toolkit';
+import type {
+  CreateFireflySliceOptions,
+  DrizzleHydrationQuery,
+  DrizzleQuery,
+  FireflyReducerFactory,
+  FireflySlice,
+  FireflySliceHydration,
+  HydrationQuery,
+} from 'redux-firefly/toolkit';
+
+/** What this app's `fireflyReducer` accepts on top of the library's. */
+interface WithFailure {
+  failure?: { title: string; message: string };
+}
+
+function withFailure<State>(
+  fireflyReducer: FireflyReducerFactory<State>
+): FireflyReducerFactory<State, WithFailure> {
+  return (def) => {
+    const caseReducer = fireflyReducer(def);
+    const { failure } = def;
+    if (!failure) return caseReducer;
+    return {
+      ...caseReducer,
+      prepare: (...args) => {
+        // The reducer's own `prepare` may have returned a `meta` too: keep it.
+        const prepared: ReturnType<typeof caseReducer.prepare> & { meta?: object } =
+          caseReducer.prepare(...args);
+        return { ...prepared, meta: { ...prepared.meta, failure } };
+      },
+    };
+  };
+}
+
+type AppSliceOptions<State, CR extends SliceCaseReducers<State>, Name extends string> =
+  CreateFireflySliceOptions<State, CR, Name, WithFailure>;
+
+// The two `hydration` overloads of createFireflySlice, so that callers keep a
+// typed `transform`; the implementation forwards either kind.
+export function createAppSlice<
+  State,
+  Name extends string,
+  CR extends SliceCaseReducers<State>,
+  const Q extends DrizzleQuery | readonly DrizzleQuery[],
+>(
+  options: AppSliceOptions<State, CR, Name> & { hydration: DrizzleHydrationQuery<Q, State> }
+): FireflySlice<State, CR, Name>;
+export function createAppSlice<State, Name extends string, CR extends SliceCaseReducers<State>>(
+  options: AppSliceOptions<State, CR, Name> & { hydration?: HydrationQuery }
+): FireflySlice<State, CR, Name>;
+export function createAppSlice<State, Name extends string, CR extends SliceCaseReducers<State>>(
+  options: AppSliceOptions<State, CR, Name> & { hydration?: FireflySliceHydration<State> }
+): FireflySlice<State, CR, Name> {
+  const { reducers, ...rest } = options;
+  return createFireflySlice({
+    ...rest,
+    reducers: (fireflyReducer) => reducers(withFailure(fireflyReducer)),
+  });
+}
+```
+
+Slices written with `createAppSlice` look the same as before, plus `failure: { ... }` on a reducer. Everything else passes through with its types: `hydration`, `applyRows`, the action creators, their `.commit` / `.rollback` matchers and the per-slot results.
+
+- `FireflyReducerFactory<State, Extra>` is the type of the `fireflyReducer` helper; `Extra` names the fields your wrapper accepts on top of the library's.
+- `CreateFireflySliceOptions<State, CR, Name, Extra>` is the options object without `hydration`, which each overload types.
+- `FireflySliceHydration<State>` is either kind of hydration. It is for the implementation signature only: `createFireflySlice` has a third overload that accepts it, so the wrapper can forward its options without a cast. Its Drizzle `transform` takes `unknown` rows, so a `hydration` written in place with an annotated `transform` is still checked against its query by the typed overloads.
+- `prepare`'s declared return type is `{ payload }`: a `meta` it returns is kept at runtime but is not part of the type, which is why the wrapper above widens `prepared` before reading `prepared.meta`.
 
 ### SQL Effects
 
@@ -407,6 +647,87 @@ The driver automatically detects SELECT queries (returns rows) vs mutations (ret
 { sql: 'SELECT * FROM todos WHERE completed = ?', params: [1] }
 ```
 
+### Record Effects
+
+A record effect names its statements. Instead of an array whose results you read by position, return an object whose keys you choose — the commit hands the results back under the same keys. Shown here with [Drizzle](#drizzle-orm) queries:
+
+```typescript
+addTodoWithTags: fireflyReducer({
+  prepare: (text: string, tagIds: number[], categoryId?: number) => ({
+    payload: { id: Crypto.randomUUID(), text, tagIds, categoryId },
+  }),
+  effect: (payload) => ({
+    // One statement
+    todo: db.insert(todos).values({ id: payload.id, text: payload.text }).returning(),
+    // A list of statements (may be empty)
+    tags: payload.tagIds.map((tagId) =>
+      db.insert(todoTags).values({ todoId: payload.id, tagId })
+    ),
+    // Skipped when the todo has no category
+    category: payload.categoryId !== undefined &&
+      db.update(categories)
+        .set({ updatedAt: Date.now() })
+        .where(eq(categories.id, payload.categoryId))
+        .returning({ id: categories.id }),
+  }),
+  commit: (state, { payload, results }) => {
+    const [row] = results.todo; // the rows from .returning()
+    state.push({ id: row.id, text: row.text, completed: row.completed });
+
+    results.tags;     // one result per insert, [] when tagIds was empty
+    results.category; // { id: number }[] | undefined
+  },
+}),
+```
+
+Each key is a **slot**. What a slot holds decides what the commit returns for it:
+
+| Slot value | `results.<name>` |
+| --- | --- |
+| One statement | That statement's result |
+| A list of statements | An array with one result per statement, in list order — `[]` when the list is empty |
+| `undefined`, `null`, `false`, or any other falsy value (`0`, `''`) | `undefined` |
+
+A statement is a Drizzle query or an SQL effect (`{ sql, params }`). A falsy slot is skipped, so a guard can be any condition: `payload.removeOld && query`, `payload.ids.length && query`, `payload.name && query`.
+
+- **One transaction.** Every statement of the record runs in a single transaction — `database.transaction` for Drizzle queries, the driver's `withTransactionAsync` for SQL effects — also when the record holds just one statement. If a statement fails, the whole write fails: a rollback is dispatched, `onError` is called, and no partial results are committed.
+- **Record order.** Statements run in slot order, then in the order inside a list slot. Slot order is JavaScript's property order, so integer-like names (`'0'`, `'1'`) run first, in ascending order, however you wrote them. Use descriptive names.
+- **One kind of statement.** A record holds Drizzle queries or SQL effects, not both — they cannot share a transaction. A mixed record fails before anything runs.
+- **Typed results.** With Drizzle queries, `results` is typed slot by slot from the queries: a single slot gives the query's result, a list slot an array of them, and `condition && query` gives `Result | undefined`, whether the condition is a boolean, a number or a string. SQL effects are typed as loosely as they are in the single form: a slot is typed as a mutation result (`{ lastInsertRowId, changes }`) even when it is a `SELECT`, and a record with an inline `{ sql, params }` slot has `any` results.
+- **Checked slots.** In `fireflyReducer`, a slot that is not a statement, a list of statements or a falsy value does not compile: a Promise (`await`ed or `.run()` query), a query builder that was not called, a list with a skipped entry (`[cond && query]` — skip the whole slot instead). The error is on `effect` and names the slot: `... is not assignable to type 'FireflyInvalidEffectSlot<"deleted">'`. In a plain action, such a record fails when it runs, before any statement does.
+- **No slot named `sql`.** An object with a `sql` key is always read as an [SQL effect](#sql-effects), so `sql` cannot be a slot name.
+- **Nothing to run.** A record whose slots are all skipped or empty lists is an [empty write](#empty-writes).
+
+Records work everywhere an effect does: as a static value, as a function of the payload, and in [plain actions](#plain-actions-without-toolkit), where the named results arrive as `action.meta.firefly.result`.
+
+### Empty Writes
+
+An effect with nothing to run is a no-op. That is any of:
+
+- `[]`
+- `{}`
+- a record whose slots are all skipped (`undefined` / `null` / `false`, or another falsy value) or empty lists
+- `undefined` or `null`
+
+The dispatched action still reaches the reducers, so an optimistic `reducer` runs as usual. After that nothing happens: no database work, no commit, no rollback, and `onError` is not called. You can build an effect from your data without guarding against the empty case:
+
+```typescript
+tagTodos: fireflyReducer({
+  prepare: (todoIds: number[], tagId: number) => ({ payload: { todoIds, tagId } }),
+  // No todos selected: nothing runs and nothing is dispatched.
+  effect: (payload) =>
+    payload.todoIds.map((todoId) => db.insert(todoTags).values({ todoId, tagId: payload.tagId })),
+  commit: (state, { payload }) => { /* ... */ },
+}),
+```
+
+Notes:
+- No commit or rollback follows an empty write, so do not have the optimistic `reducer` mark state as pending when there is nothing to write — no handler will run to clear it.
+- Arrays are positional: only a zero-length array is empty, and entries are not filtered. For statements that are sometimes skipped, use a [record](#record-effects).
+- `isEmptyEffect(effect)`, exported from `redux-firefly`, is the check the middleware uses.
+- Only these forms are empty. A value that is not an effect at all is not: a Promise (an `async` effect function, or a query that was awaited or run), a `Date`, an `{ sql }` object whose `sql` is not a string. Such a write fails like any other — rollback and `onError` — with an error that says what it was given. `fireflyReducer` rejects an effect that returns a Promise at compile time.
+- A `createFireflySlice` write with an empty effect is dispatched with `meta.firefly.effect` set to `undefined`, so `isFireflyAction(action)` is `false` for it.
+
 ## Drizzle ORM
 
 Redux-Firefly has first-class support for [Drizzle ORM](https://orm.drizzle.team/). You can use Drizzle query builders directly as effects instead of plain effect objects — no wrapping or adapters needed.
@@ -415,17 +736,17 @@ Redux-Firefly has first-class support for [Drizzle ORM](https://orm.drizzle.team
 
 ### Setup
 
-Pass your Drizzle database instance directly to `createFirefly`:
+Pass your Drizzle database instance directly to `createReduxFirefly`:
 
 ```typescript
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 
 const expoDb = SQLite.openDatabaseSync('app.db');
 const db = drizzle(expoDb);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // no driver wrapper needed
 });
 ```
@@ -565,6 +886,44 @@ addTodoWithTags: fireflyReducer({
 }),
 ```
 
+An array's results are positional: the commit gets one `{ success, rows }` per query, in array order. To read results by name instead — or to skip some statements conditionally — return a record of named queries; it runs in one transaction the same way. See [Record Effects](#record-effects).
+
+> **What "one transaction" means.** For Drizzle effects, Redux-Firefly only ever calls `database.transaction(callback)` and awaits each statement inside the callback — it never issues `BEGIN` / `COMMIT` itself. The statements are atomic when your database's `transaction()` waits for an async callback, as Drizzle's async drivers do (for example `sqlite-proxy`, used in [Drizzle + FireflyDB](#drizzle--fireflydb)). Drizzle's synchronous `expo-sqlite` driver commits as soon as the callback returns its promise, before the awaited statements have run: the write still completes and commits its results, but the statements are not wrapped by that transaction. The same goes for a `transaction()` that does not wait for its callback at all (Drizzle's `durable-sqlite` driver returns before the statements run): Redux-Firefly waits for the statements themselves, then commits their results or rolls back with the error of the one that failed. This holds for arrays, records and single statements alike.
+>
+> **A `transaction()` that refuses an async callback.** Drizzle's `better-sqlite3` driver goes one step further: its `transaction()` throws (`Transaction function cannot return a promise`) instead of committing early. There, no transaction can hold the statements, so an array or a record effect rolls back without running any of them, with an error that says so, and a single query is awaited directly (see [Single Statements](#single-statements)). To write several statements atomically on such a driver, configure a `database` whose `transaction()` waits for an async callback.
+
+### Single Statements
+
+A single Drizzle query takes the same route as an array or a record: Redux-Firefly calls `database.transaction(callback)` and awaits the query inside the callback. On a database that queues its transactions, a single-statement write therefore waits behind a transaction that is already open instead of running inside it. The commit result is unchanged — it is the query's own result.
+
+To await single queries directly instead, as 1.x did, turn the option off:
+
+```typescript
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
+  database: db,
+  transactionalSingleStatements: false,
+});
+```
+
+> **Pooled drivers must turn it off.** With a connection pool (for example `node-postgres`), `database.transaction` holds one connection for as long as its callback runs, and the query — which was built on `database`, not on the transaction — takes a second one to run. Every single-statement write then needs two connections at once, and the statement does not even run inside that transaction. With `serializeEffects: false`, as many concurrent writes as the pool has connections hold all of them while each waits for one more: they wait forever (no commit, no rollback, no `onError`) unless the pool has an acquire timeout. Configure a pooled database with both options off:
+>
+> ```typescript
+> createReduxFirefly({
+>   database: db,
+>   serializeEffects: false,
+>   transactionalSingleStatements: false,
+> });
+> ```
+>
+> Arrays and records had this cost in 1.x already, and still do: on a pooled driver their statements run on other connections than the transaction's.
+
+Notes:
+- The option covers the bare single-query form only. Arrays and records always use a transaction.
+- If the configured `database` has no `transaction` function (a `FireflyDriver`), a single Drizzle query is awaited directly.
+- If `database.transaction` is synchronous and refuses an async callback (Drizzle's `better-sqlite3` driver throws `Transaction function cannot return a promise`), a single Drizzle query is awaited directly too, as 1.x did. Each write then costs one refused `BEGIN` / `ROLLBACK`; set `transactionalSingleStatements: false` to skip it.
+- A single SQL effect is not affected: it runs through the driver's `runAsync` / `getAllAsync`, without a transaction.
+- The outcome of the write is the callback's, not `transaction()`'s. If `database.transaction` resolves, or returns, before its callback has finished, the statement is running on its own: Redux-Firefly waits for it, and commits its result or rolls back with its error, as 1.x did. If it resolves although its callback was never called, the statement did not run: the write rolls back.
+
 ### SELECT Queries with Drizzle
 
 Use Drizzle `select()` as an effect to run queries and handle results in the `commit` handler:
@@ -577,12 +936,11 @@ searchTodos: fireflyReducer({
     db.select({ id: todos.id, text: todos.text, completed: todos.completed })
       .from(todos)
       .where(like(todos.text, `%${payload.searchText}%`)),
-  commit: (_state, action) => {
-    const rows = action.meta.firefly.result?.rows || [];
-    return rows.map((row: any) => ({
+  // `results` is the query's rows, typed from the select
+  commit: (_state, { results }) =>
+    results.map((row) => ({
       id: row.id, text: row.text, completed: row.completed,
-    }));
-  },
+    })),
 }),
 ```
 
@@ -622,7 +980,23 @@ moveTodoToCategory: fireflyReducer({
 }),
 ```
 
-For transactions, `action.meta.firefly.result.results` contains an array of individual `OperationResult` objects.
+For an array effect, `results` (`action.meta.firefly.result`) is an array with one `OperationResult` (`{ success, rows }`) per statement, in array order. To get the results by name instead, return a record of named statements — see [Record Effects](#record-effects):
+
+```typescript
+effect: (payload) => ({
+  todo: {
+    sql: 'UPDATE todos SET category_id = ? WHERE id = ?',
+    params: [payload.categoryId, payload.todoId],
+  },
+  category: {
+    sql: 'UPDATE categories SET updated_at = ? WHERE id = ?',
+    params: [Math.floor(Date.now() / 1000), payload.categoryId],
+  },
+}),
+commit: (state, { payload, results }) => {
+  // results.todo and results.category are each { lastInsertRowId, changes }
+},
+```
 
 ### Static Effects
 
@@ -656,6 +1030,8 @@ export const archiveOldTodos = () => ({
   },
 });
 ```
+
+`commit` and `rollback` are optional here: a hand-written action dispatches only the ones it declares. The commit action is `{ type, payload, meta: { firefly: { result } } }` and the rollback action `{ type, payload, meta: { firefly: { error } } }`, where `payload` is `meta.firefly.originalPayload` if you set it. `effect` takes every form `createFireflySlice` does — a single effect, an array, or a [record](#record-effects) — and [empty writes](#empty-writes) are skipped the same way.
 
 ## React Integration
 
@@ -710,7 +1086,7 @@ Pass the `FireflyClient` as `changes` and bind each slice to its table with
 `applyRows`:
 
 ```typescript
-import { createFirefly, withHydration, applyRows, listApply } from 'redux-firefly';
+import { createReduxFirefly, withHydration, applyRows, listApply } from 'redux-firefly';
 
 const todosReducer = applyRows(
   withHydration(todosSlice.reducer, { query: 'SELECT * FROM todos', /* … */ }),
@@ -724,7 +1100,7 @@ const todosReducer = applyRows(
   },
 );
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db, // drizzle over the FireflyClient connection
   changes: client,
 });
@@ -775,9 +1151,9 @@ goes around it never syncs. For **raw-SQL** effects, wrap the client with
 [`fireflyClientDriver`](#fireflyclientdriverclient):
 
 ```typescript
-import { createFirefly, fireflyClientDriver } from 'redux-firefly';
+import { createReduxFirefly, fireflyClientDriver } from 'redux-firefly';
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: fireflyClientDriver(client),
   changes: client,
 });
@@ -787,8 +1163,10 @@ For drizzle effects, see the next section — they bypass the driver.
 
 ### Drizzle + FireflyDB
 
-A drizzle effect is awaited directly and carries its own db handle, so it
-bypasses whatever `database` driver you configured. To run drizzle on the
+A drizzle effect carries its own db handle: its statements run on the drizzle
+instance that built them, so they bypass whatever `database` driver you
+configured (Redux-Firefly only calls `database.transaction` around them, when
+the configured database has one). To run drizzle on the
 tracked connection, build the drizzle instance **over the client itself** with
 drizzle's `sqlite-proxy` driver, forwarding to `client.exec` / `client.query`:
 
@@ -822,7 +1200,7 @@ slices):
 
 ```typescript
 import { createFireflyClient } from '@fireflydb/expo';
-import { createFirefly } from 'redux-firefly';
+import { createReduxFirefly } from 'redux-firefly';
 import { makeDb } from './db';
 
 const client = createFireflyClient({ /* relayUrl, databaseID, token, … */ });
@@ -831,7 +1209,7 @@ await client.open();
 
 const db = makeDb(client);
 
-const { middleware, enhanceReducer, enhanceStore } = createFirefly({
+const { middleware, enhanceReducer, enhanceStore } = createReduxFirefly({
   database: db,
   changes: client,
 });
@@ -877,10 +1255,11 @@ Notes:
 - **Generate row ids in the app** (UUIDs / `firefly_uuid()`). CRDT rows need ids
   that are stable across devices — never rely on `AUTOINCREMENT` or
   last-insert-rowid.
-- **Transactions work through the proxy**: drizzle's `db.transaction` (and array
-  effects) forward `BEGIN`/`COMMIT`/`ROLLBACK` through `client.exec`. The client
-  is a single connection, so keep `serializeEffects` on (the default) to prevent
-  overlapping transactions.
+- **Transactions work through the proxy**: drizzle's `db.transaction` — and so
+  array effects, [record effects](#record-effects) and
+  [single statements](#single-statements) — forward `BEGIN`/`COMMIT`/`ROLLBACK`
+  through `client.exec`. The client is a single connection, so keep
+  `serializeEffects` on (the default) to prevent overlapping transactions.
 - The full loop: dispatch → optimistic reducer → drizzle effect writes through
   the client (tracked, syncs to the relay) → commit action. Other devices
   receive the change as merged rows → their `applyRows` slices update — and

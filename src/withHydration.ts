@@ -13,7 +13,7 @@ export type HydratedReducer<S = unknown> = Reducer<S> & {
 
 /**
  * Attaches hydration configuration to a reducer so it can be
- * auto-discovered by `enhanceReducer` from `createFirefly`.
+ * auto-discovered by `enhanceReducer` from `createReduxFirefly`.
  *
  * @example
  * export const todosReducer = withHydration(todosSlice.reducer, {

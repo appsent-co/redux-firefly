@@ -12,11 +12,58 @@ export interface FireflyEffect {
 }
 
 /**
+ * One named slot of a record effect: a single statement, a list of statements,
+ * or nothing when the write does not need it. "Nothing" is `undefined`, `null`
+ * or `false`, and the other falsy values a guard leaves behind: `0`, `0n` and
+ * `''`, as in `ids.length && query` or `name && query`.
+ */
+export type FireflyEffectSlot =
+  | DrizzleQuery
+  | FireflyEffect
+  | readonly (DrizzleQuery | FireflyEffect)[]
+  | null
+  | undefined
+  | false
+  | 0
+  | 0n
+  | '';
+
+/**
+ * A record effect: named statements that all run in one transaction, in record
+ * order (slot order, then order inside a list slot). The commit carries the
+ * results under the same names — see {@link FireflyRecordResults}.
+ *
+ * A slot cannot be named `sql`: an object with a `sql` key is always read as a
+ * SQL effect.
+ *
+ * @example
+ * effect: (p) => ({
+ *   profile: db.update(profiles).set(p.profile).returning(),
+ *   slots: p.slots.map((slot) => db.insert(slots).values(slot)),
+ *   deleted: p.removeOld && db.delete(profiles).where(...),
+ * })
+ */
+export type FireflyEffectRecord = { readonly [name: string]: FireflyEffectSlot } & { readonly sql?: never };
+
+/**
  * Firefly metadata attached to Redux actions
  */
 export interface FireflyMeta {
-  /** Database operation(s) to execute - single effect, array for transactions, or drizzle query */
-  effect: FireflyEffect | FireflyEffect[] | DrizzleQuery | DrizzleQuery[];
+  /**
+   * Database operation(s) to execute: a single effect or drizzle query, an
+   * array of them (positional results), or a record of named slots (results by
+   * name). All but the single raw-SQL form run in one transaction. An empty
+   * effect (`undefined`, `null`, `[]`, `{}`, a record with nothing to run) is a
+   * no-op: nothing runs and neither commit nor rollback is dispatched.
+   */
+  effect:
+    | FireflyEffect
+    | FireflyEffect[]
+    | DrizzleQuery
+    | DrizzleQuery[]
+    | FireflyEffectRecord
+    | null
+    | undefined;
   /** Optional action to dispatch on successful operation */
   commit?: Action & Record<string, unknown>;
   /** Optional action to dispatch on failed operation */
@@ -60,7 +107,29 @@ export interface FireflyRollbackAction<P = any> extends Action {
 }
 
 /**
- * Type guard to check if an action is a Firefly action
+ * What a commit carries once unpacked: the original payload and the effect's
+ * results (by name for a record effect).
+ */
+export interface FireflyCommitted<P = any, R = any> {
+  payload: P;
+  results: R;
+}
+
+/**
+ * What a rollback carries once unpacked: the original payload and the error
+ * that failed the write. The database is unchanged.
+ */
+export interface FireflyRolledBack<P = any> {
+  payload: P;
+  error: Error;
+}
+
+/**
+ * Type guard to check if an action is a Firefly action.
+ *
+ * An action whose effect is `null` or `undefined` is not one (there is nothing
+ * to run). `[]` and `{}` still are — structurally Firefly actions — and the
+ * middleware skips them as empty writes.
  */
 export function isFireflyAction(action: unknown): action is FireflyAction {
   if (typeof action !== 'object' || action === null) {
@@ -77,7 +146,8 @@ export function isFireflyAction(action: unknown): action is FireflyAction {
   }
 
   const firefly = meta.firefly as Record<string, unknown>;
-  return 'effect' in firefly && typeof firefly.effect === 'object';
+  // `typeof null === 'object'`, so null needs its own check.
+  return 'effect' in firefly && typeof firefly.effect === 'object' && firefly.effect !== null;
 }
 
 /**
@@ -167,10 +237,29 @@ export interface FireflyConfig {
    * Required for single-connection drivers (expo-sqlite, better-sqlite3) to
    * avoid "cannot start a transaction within a transaction". Set `false` for
    * pooled drivers (pg, mysql2) where the pool handles concurrency and
-   * serialization would throw away real parallelism.
+   * serialization would throw away real parallelism — and set
+   * `transactionalSingleStatements` to `false` with it.
    * @default true
    */
   serializeEffects?: boolean;
+  /**
+   * Run a bare single drizzle query through `database.transaction`, like a
+   * list, so it waits behind a transaction already open on the same database
+   * instead of running inside it. Set `false` to await the query directly as
+   * 1.x did. Arrays and record effects always use a transaction.
+   *
+   * A database whose `transaction()` is synchronous and refuses an async
+   * callback (drizzle's better-sqlite3 driver) cannot hold the query: it is
+   * awaited directly there whatever this option says, and arrays and record
+   * effects roll back without running anything.
+   *
+   * Set it to `false` for a pooled driver. There the transaction holds one
+   * connection while the query, built on the database and not on the
+   * transaction, takes a second one: with `serializeEffects: false`, as many
+   * concurrent writes as the pool has connections wait on each other forever.
+   * @default true
+   */
+  transactionalSingleStatements?: boolean;
 }
 
 /**
@@ -230,6 +319,39 @@ export interface FireflyStore {
   dispose: () => void;
 }
 
+/** The result of one statement of a record effect. */
+type FireflyStatementResult<Q> =
+  Q extends DrizzleQuery<infer R> ? R :
+  Q extends FireflyEffect ? DriverMutationResult :
+  never;
+
+/**
+ * The result a record effect's slot commits:
+ *
+ * - a single statement → that statement's result
+ * - a list of statements → one result per statement (`[]` for an empty list)
+ * - a skipped slot (`undefined` / `null` / `false`, or another falsy value)
+ *   → `undefined`
+ *
+ * Distributes over unions, so `cond && query` gives `Result | undefined`,
+ * whatever falsy value `cond` leaves behind.
+ */
+export type FireflySlotResult<V> =
+  V extends DrizzleQuery<infer R> ? R :
+  V extends FireflyEffect ? DriverMutationResult :
+  V extends readonly (infer Q)[] ? FireflyStatementResult<Q>[] :
+  undefined;
+
+/** What each named slot of a record effect returned, under the same names. */
+export type FireflyRecordResults<S> = { -readonly [K in keyof S]: FireflySlotResult<S[K]> };
+
+/**
+ * `E`, read as a record: every property a slot, none named `sql`. Mapped over
+ * `E`'s own keys rather than checked against {@link FireflyEffectRecord}'s
+ * index signature, so that a record typed by an interface is one too.
+ */
+type FireflyRecordOf<E> = { readonly [K in keyof E]: K extends 'sql' ? never : FireflyEffectSlot };
+
 /**
  * Infers the commit result type from the effect type.
  *
@@ -237,12 +359,20 @@ export interface FireflyStore {
  * - DrizzleQuery[] → MapDrizzleResults (tuple of OperationResult per query)
  * - FireflyEffect (RAW) → DriverMutationResult
  * - FireflyEffect[] → OperationResult[]
+ * - a record of slots → FireflyRecordResults (each slot's result, by name)
+ * - null / undefined → never (an empty write never commits)
+ *
+ * The record branch comes last: a query, an array and a raw effect are objects
+ * too, and must not be read as records.
  */
 export type InferEffectResult<E> =
+  E extends null | undefined ? never :
   E extends DrizzleQuery<infer R> ? R :
   E extends readonly DrizzleQuery[] ? MapDrizzleResults<E> :
   E extends FireflyEffect ? DriverMutationResult :
   E extends readonly FireflyEffect[] ? OperationResult[] :
+  E extends readonly unknown[] ? any :
+  E extends object ? (E extends FireflyRecordOf<E> ? FireflyRecordResults<E> : any) :
   any;
 
 /**

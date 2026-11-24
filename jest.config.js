@@ -10,10 +10,11 @@ module.exports = {
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   transform: {
+    // tsconfig.test.json is the strict project config plus the tests. It turns
+    // isolatedModules off, because ts-jest only type-checks without it, and the
+    // type-level tests must fail the run when a type regresses.
     '^.+\\.tsx?$': ['ts-jest', {
-      tsconfig: {
-        esModuleInterop: true,
-      },
+      tsconfig: '<rootDir>/tsconfig.test.json',
     }],
   },
 };

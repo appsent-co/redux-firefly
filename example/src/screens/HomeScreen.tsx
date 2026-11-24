@@ -21,7 +21,7 @@ const examples = [
   {
     title: 'Plain Redux',
     subtitle: 'No toolkit',
-    description: 'Uses vanilla Redux with createFirefly, withHydration, and expoSQLiteDriver.',
+    description: 'Uses vanilla Redux with createReduxFirefly, withHydration, and expoSQLiteDriver.',
     icon: '🧱',
     route: 'PlainRedux',
     color: '#AF52DE',

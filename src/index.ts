@@ -1,5 +1,5 @@
 // Main API
-export { createFirefly } from './createFirefly';
+export { createReduxFirefly } from './createReduxFirefly';
 export { withHydration, isHydratedReducer, applyRows, isApplyRowsReducer } from './withHydration';
 export type { HydratedReducer } from './withHydration';
 export { fireflyHydration } from './drizzle/hydrate';
@@ -23,16 +23,21 @@ export type {
 
 // Type guards and utilities
 export { isFireflyAction } from './types';
+export { isEmptyEffect } from './executor';
 
 // TypeScript types
 export type {
   // Effects
   FireflyEffect,
+  FireflyEffectSlot,
+  FireflyEffectRecord,
 
   // Action & Metadata
   FireflyAction,
   FireflyCommitAction,
   FireflyRollbackAction,
+  FireflyCommitted,
+  FireflyRolledBack,
   FireflyMeta,
 
   // Configuration
@@ -52,6 +57,9 @@ export type {
 
   // Results
   OperationResult,
+  InferEffectResult,
+  FireflySlotResult,
+  FireflyRecordResults,
 
   // Store
   FireflyStore,
