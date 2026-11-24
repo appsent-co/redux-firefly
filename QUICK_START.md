@@ -244,7 +244,7 @@ const todosSlice = createFireflySlice({
       effect: (payload) => db.insert(todos).values({ text: payload.text }),
       commit: (state, action) => {
         const todo = state.find(t => t.id === action.payload.id);
-        if (todo) todo.id = action.meta.firefly.result.insertId!;
+        if (todo) todo.id = action.meta.firefly.result.lastInsertRowId;
       },
       rollback: (state, action) => state.filter(t => t.id !== action.payload.id),
     }),
@@ -306,7 +306,7 @@ export const store = configureStore({
 
 Steps 5 (App setup) and the React component remain identical — see above.
 
-For the full Drizzle API (transactions, JOINs, SELECT queries, multi-query hydration), see the [Drizzle ORM section](README.md#drizzle-orm) in the README.
+For the full Drizzle API (transactions, record effects, JOINs, SELECT queries, multi-query hydration), see the [Drizzle ORM section](README.md#drizzle-orm) in the README.
 
 ---
 
@@ -321,9 +321,13 @@ Your app now:
 
 ## Next Steps
 
+**Writing more than one statement?** Return a record of named statements from `effect` instead of a single one: `effect: (p) => ({ todo: db.insert(todos).values(p.todo).returning(), tags: p.tags.map((tag) => db.insert(todoTags).values(tag)) })`. They all run in one transaction, and the commit handler reads each result by name: `commit: (state, { payload, results }) => { results.todo; results.tags; }`. See [Record Effects](README.md#record-effects).
+
+- React to a write from another slice or from listener middleware with the action creator's `.commit` / `.rollback` matchers — see [Commit and Rollback Matchers](README.md#commit-and-rollback-matchers)
 - See [Advanced Patterns](README.md#advanced-usage) for transactions and static effects
 - Read the [API Reference](README.md#api-reference) for complete documentation
 - Check out the example app in `/example`
+- Upgrading from 1.x? See [Migrating from 1.x](CHANGELOG.md#migrating-from-1x)
 
 ## Common Issues
 

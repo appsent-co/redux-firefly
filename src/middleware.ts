@@ -1,16 +1,19 @@
 import type { Middleware } from 'redux';
 import type { FireflyConfig } from './types';
 import { isFireflyAction } from './types';
-import { executeOperation } from './executor';
+import { executeOperation, isEmptyEffect } from './executor';
 import { createSerializer } from './serializer';
 
 /**
  * Creates the effect-executing middleware: any dispatched Firefly action's DB
  * effect runs against the database, then its commit/rollback action is
- * dispatched. Use via `createReduxFirefly`.
+ * dispatched. An action whose effect has nothing to run still reaches the
+ * reducers, and that is all: no DB work, no commit, no rollback, no `onError`.
+ * Use via `createReduxFirefly`.
  */
 export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, any, any> {
   const { database, onError, debug } = config;
+  const executeOptions = { transactionalSingleStatements: config.transactionalSingleStatements };
 
   // With serializeEffects on (the default, required for single-connection
   // drivers that reject nested BEGIN), effects are chained so only one runs at
@@ -28,13 +31,22 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
 
     const { firefly } = action.meta;
 
+    // An empty write is not queued either: it must not wait behind, or hold
+    // up, the writes that do have work.
+    if (isEmptyEffect(firefly.effect)) {
+      if (debug) {
+        console.log('[Firefly] Empty effect, nothing to run:', action.type);
+      }
+      return result;
+    }
+
     if (debug) {
       console.log('[Firefly] Processing action:', action.type);
       console.log('[Firefly] Effect:', firefly.effect);
     }
 
     const run = () =>
-      executeOperation(database, firefly.effect)
+      executeOperation(database, firefly.effect, executeOptions)
         .then((opResult) => {
           if (opResult.success) {
             if (debug) {
@@ -78,7 +90,10 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
             }
           }
         })
-        .catch((error: Error) => {
+        .catch((thrown: unknown) => {
+          // A rollback always carries an Error, whatever was thrown.
+          const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+
           if (debug) {
             console.error('[Firefly] Unexpected error:', error);
           }
