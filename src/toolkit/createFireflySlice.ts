@@ -4,11 +4,15 @@ import type {
   ActionReducerMapBuilder,
   CaseReducerActions,
   CreateSliceOptions,
+  Dispatch,
   Draft,
+  ListenerEffectAPI,
   PayloadAction,
   Slice,
   SliceCaseReducers,
+  TypedStartListening,
   UnknownAction,
+  UnsubscribeListener,
   ValidateSliceCaseReducers,
 } from '@reduxjs/toolkit';
 import type {
@@ -403,9 +407,82 @@ export function createFireflySlice<
 >(options: CreateFireflySliceOptions<State, CR, Name> & {
   hydration?: HydrationQuery | DrizzleHydrationQuery<any, State>;
 }): FireflySlice<State, CR, Name> {
+  return createSliceImpl(options);
+}
+
+/**
+ * The overloaded `createFireflySlice` signature, parameterized by `Extra`
+ * reducer fields added via {@link buildCreateFireflySlice}.
+ */
+export interface CreateFireflySlice<Extra = unknown> {
+  <
+    State,
+    Name extends string,
+    CR extends SliceCaseReducers<State>,
+    const Q extends DrizzleQuery | readonly DrizzleQuery[],
+  >(
+    options: CreateFireflySliceOptions<State, CR, Name, Extra> & {
+      hydration: DrizzleHydrationQuery<Q, State>;
+    }
+  ): FireflySlice<State, CR, Name>;
+  <State, Name extends string, CR extends SliceCaseReducers<State>>(
+    options: CreateFireflySliceOptions<State, CR, Name, Extra> & {
+      hydration?: HydrationQuery;
+    }
+  ): FireflySlice<State, CR, Name>;
+  <State, Name extends string, CR extends SliceCaseReducers<State>>(
+    options: CreateFireflySliceOptions<State, CR, Name, Extra> & {
+      hydration?: FireflySliceHydration<State>;
+    }
+  ): FireflySlice<State, CR, Name>;
+}
+
+/** Options for {@link buildCreateFireflySlice}. */
+export interface BuildCreateFireflySliceOptions<Extra extends object> {
+  /**
+   * Derives extra properties to merge into the dispatched action's `meta`
+   * (alongside `meta.firefly` and any `meta` returned by `prepare`).
+   * Called once per firefly reducer when the slice is created.
+   */
+  meta?: (def: Extra) => Record<string, unknown> | undefined;
+}
+
+/**
+ * Builds a custom `createFireflySlice` whose `fireflyReducer` accepts extra
+ * app-specific fields (`Extra`) and attaches action metadata derived from them,
+ * without duplicating `createFireflySlice`'s overloads or wrapping `prepare`.
+ *
+ * @example
+ * const createFireflySlice = buildCreateFireflySlice<{ failure?: FailureCopy }>({
+ *   meta: ({ failure }) => (failure ? { failure } : undefined),
+ * });
+ */
+export function buildCreateFireflySlice<Extra extends object = Record<never, never>>(
+  options?: BuildCreateFireflySliceOptions<Extra>
+): CreateFireflySlice<Extra> {
+  const getMeta = options?.meta;
+  const factory = (
+    sliceOptions: CreateFireflySliceOptions<any, any, any, Extra> & {
+      hydration?: HydrationQuery | DrizzleHydrationQuery<any, any>;
+    }
+  ) => createSliceImpl(sliceOptions, getMeta);
+  return factory as CreateFireflySlice<Extra>;
+}
+
+function createSliceImpl<
+  State,
+  Name extends string,
+  CR extends SliceCaseReducers<State>,
+  Extra = unknown,
+>(
+  options: CreateFireflySliceOptions<State, CR, Name, Extra> & {
+    hydration?: HydrationQuery | DrizzleHydrationQuery<any, State>;
+  },
+  getMeta?: (def: Extra) => Record<string, unknown> | undefined
+): FireflySlice<State, CR, Name> {
   const { name, reducers: reducersFactory, hydration, applyRows: applyRowsConfig, extraReducers: userExtraReducers, ...rest } = options;
 
-  const definitions: CR = reducersFactory(createFireflyCaseReducer<State>());
+  const definitions: CR = reducersFactory(createFireflyCaseReducer<State>() as FireflyReducerFactory<State, Extra>);
 
   // What createSlice gets: plain case reducers as they are, and for each
   // firefly reducer a `{ reducer, prepare }` built here. The definitions are
@@ -446,6 +523,7 @@ export function createFireflySlice<
 
     const { effect } = def;
     const prepare: (...args: any[]) => { payload: unknown; meta?: unknown } = def.prepare ?? identityPrepare;
+    const extraMeta = getMeta?.(def as unknown as Extra);
 
     caseReducers[key] = {
       reducer: def.reducer ?? noopReducer,
@@ -473,7 +551,7 @@ export function createFireflySlice<
 
         return {
           ...prepared,
-          meta: { ...preparedMeta, firefly },
+          meta: { ...preparedMeta, ...extraMeta, firefly },
         };
       },
     };
@@ -550,4 +628,47 @@ export function onRollback<State, P>(
   handler: (state: Draft<State>, rolledBack: FireflyRolledBack<P>) => State | void
 ): void {
   builder.addCase(creator.rollback.type, (state, action) => handler(state, creator.rollback.unpack(action)));
+}
+
+/**
+ * Registers a listener reaction on the commit of a firefly write — the
+ * listener-middleware twin of {@link onCommit}. The effect receives the
+ * unpacked `{ payload, results }` and the listener API.
+ *
+ * @example
+ * onWriteCommit(startListening, addRoom, ({ payload, results }, api) => {
+ *   api.dispatch(syncRoom(results.room[0].id));
+ * });
+ */
+export function onWriteCommit<State, DispatchType extends Dispatch, Extra, P, R>(
+  startListening: TypedStartListening<State, DispatchType, Extra>,
+  creator: { commit: CommitMatcher<P, R> },
+  effect: (
+    committed: FireflyCommitted<P, R>,
+    api: ListenerEffectAPI<State, DispatchType, Extra>
+  ) => void | Promise<void>
+): UnsubscribeListener {
+  return startListening({
+    matcher: creator.commit.match,
+    effect: (action, api) => effect(creator.commit.unpack(action), api),
+  });
+}
+
+/**
+ * Registers a listener reaction on the rollback of a firefly write — the
+ * listener-middleware twin of {@link onRollback}. The effect receives the
+ * unpacked `{ payload, error }` and the listener API.
+ */
+export function onWriteRollback<State, DispatchType extends Dispatch, Extra, P>(
+  startListening: TypedStartListening<State, DispatchType, Extra>,
+  creator: { rollback: RollbackMatcher<P> },
+  effect: (
+    rolledBack: FireflyRolledBack<P>,
+    api: ListenerEffectAPI<State, DispatchType, Extra>
+  ) => void | Promise<void>
+): UnsubscribeListener {
+  return startListening({
+    matcher: creator.rollback.match,
+    effect: (action, api) => effect(creator.rollback.unpack(action), api),
+  });
 }
