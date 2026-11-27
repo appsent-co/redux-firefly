@@ -5,7 +5,15 @@ All notable changes to redux-firefly are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - Unreleased
+## [Unreleased]
+
+### Added
+
+- **`buildCreateFireflySlice({ meta })`** (`redux-firefly/toolkit`): creates a custom `createFireflySlice` whose `fireflyReducer` accepts extra app-specific fields and merges derived metadata onto dispatched actions, preserving all hydration and effect overloads without manual wrapper boilerplate.
+- **`runWrite(creator, ...args)` and `WriteOutcome<R>`** (`redux-firefly/toolkit`, `WriteOutcome` also on `redux-firefly`): thunk that dispatches a firefly write and resolves once its database effect commits or rolls back (directly via the Firefly middleware, without needing `listenerMiddleware`). Empty writes resolve immediately as `{ committed: true, results: {} }`.
+- **`onWriteCommit` and `onWriteRollback`** (`redux-firefly/toolkit`): listener-middleware twins of `onCommit` and `onRollback` that unpack `{ payload, results }` / `{ payload, error }` with typed `ListenerEffectAPI`.
+
+## [2.0.0] - 2026-11-24
 
 2.0 is about multi-statement writes and reacting to them. An effect can name its
 statements and read their results by name, every `createFireflySlice` write

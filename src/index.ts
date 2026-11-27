@@ -67,6 +67,7 @@ export type {
   // React
   FireflyGateProps,
 } from './types';
+export type { WriteOutcome } from './settlement';
 
 // Error classes
 export {

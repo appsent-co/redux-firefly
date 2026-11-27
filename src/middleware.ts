@@ -3,6 +3,8 @@ import type { FireflyConfig } from './types';
 import { isFireflyAction } from './types';
 import { executeOperation, isEmptyEffect } from './executor';
 import { createSerializer } from './serializer';
+import { claimPendingWrite } from './settlement';
+import type { WriteOutcome } from './settlement';
 
 /**
  * Creates the effect-executing middleware: any dispatched Firefly action's DB
@@ -45,6 +47,14 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
       console.log('[Firefly] Effect:', firefly.effect);
     }
 
+    const settle = claimPendingWrite(firefly);
+    let settled = false;
+    const settleOnce = (outcome: WriteOutcome) => {
+      if (settled || !settle) return;
+      settled = true;
+      settle(outcome);
+    };
+
     const run = () =>
       executeOperation(database, firefly.effect, executeOptions)
         .then((opResult) => {
@@ -53,11 +63,13 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
               console.log('[Firefly] Operation succeeded:', opResult);
             }
 
+            const results = opResult.rows ?? opResult.results;
+
             if (firefly.commit) {
               const commitAction = {
                 type: firefly.commit.type,
                 payload: firefly.originalPayload,
-                meta: { firefly: { result: opResult.rows ?? opResult.results } },
+                meta: { firefly: { result: results } },
               };
 
               if (debug) {
@@ -66,16 +78,20 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
 
               store.dispatch(commitAction);
             }
+
+            settleOnce({ committed: true, results });
           } else {
+            const error = opResult.error ?? new Error('[Firefly] Operation failed');
+
             if (debug) {
-              console.error('[Firefly] Operation failed:', opResult.error);
+              console.error('[Firefly] Operation failed:', error);
             }
 
             if (firefly.rollback) {
               const rollbackAction = {
                 type: firefly.rollback.type,
                 payload: firefly.originalPayload,
-                meta: { firefly: { error: opResult.error } },
+                meta: { firefly: { error } },
               };
 
               if (debug) {
@@ -88,6 +104,8 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
             if (onError && opResult.error) {
               onError(opResult.error, action);
             }
+
+            settleOnce({ committed: false, error });
           }
         })
         .catch((thrown: unknown) => {
@@ -111,6 +129,8 @@ export function createFireflyMiddleware(config: FireflyConfig): Middleware<{}, a
           if (onError) {
             onError(error, action);
           }
+
+          settleOnce({ committed: false, error });
         });
 
     // `run` never rejects (it catches internally); the serializer keeps the

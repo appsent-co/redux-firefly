@@ -1,6 +1,15 @@
-export { createFireflySlice, onCommit, onRollback } from './createFireflySlice';
+export {
+  buildCreateFireflySlice,
+  createFireflySlice,
+  onCommit,
+  onRollback,
+  onWriteCommit,
+  onWriteRollback,
+} from './createFireflySlice';
 export type {
   // Slice and matchers
+  BuildCreateFireflySliceOptions,
+  CreateFireflySlice,
   FireflySlice,
   FireflyActions,
   CommitMatcher,
@@ -22,6 +31,8 @@ export type {
   FireflyInvalidEffectSlot,
   FireflyEffectIsAPromise,
 } from './createFireflySlice';
+export { runWrite } from './runWrite';
+export type { WriteCreator, WriteOutcome } from './runWrite';
 export type {
   FireflyCommitAction,
   FireflyRollbackAction,
