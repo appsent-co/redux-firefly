@@ -36,6 +36,7 @@
     "test": "jest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint src --ext .ts,.tsx",
+    "release": "npm_config_registry=https://registry.npmjs.org GITHUB_TOKEN=\"${GITHUB_TOKEN:-$(gh auth token 2>/dev/null)}\" release-it",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -60,6 +61,7 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@reduxjs/toolkit": "^2.0.0",
+    "@release-it/conventional-changelog": "^10",
     "@rollup/plugin-node-resolve": "^15.0.0",
     "@rollup/plugin-typescript": "^11.0.0",
     "@types/jest": "^29.0.0",
@@ -72,6 +74,7 @@
     "react": "^18.0.0",
     "react-redux": "^9.0.0",
     "redux": "^5.0.0",
+    "release-it": "^19",
     "rollup": "^4.0.0",
     "rollup-plugin-dts": "^6.0.0",
     "ts-jest": "^29.0.0",
